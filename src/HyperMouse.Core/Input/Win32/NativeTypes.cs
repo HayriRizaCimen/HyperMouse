@@ -20,6 +20,16 @@ public struct MSLLHOOKSTRUCT
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public struct KBDLLHOOKSTRUCT
+{
+    public uint vkCode;
+    public uint scanCode;
+    public uint flags;
+    public uint time;
+    public nuint dwExtraInfo;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public struct MSG
 {
     public IntPtr hwnd;
@@ -78,4 +88,3 @@ public struct HARDWAREINPUT
     public ushort wParamL;
     public ushort wParamH;
 }
-

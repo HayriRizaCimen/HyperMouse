@@ -2,10 +2,11 @@ namespace HyperMouse.Core.Input.Win32;
 
 public static class NativeConstants
 {
-    // Windows Hook ID
+    // Windows Hook IDs
+    public const int WH_KEYBOARD_LL = 13;
     public const int WH_MOUSE_LL = 14;
 
-    // Window Messages
+    // Window Mouse Messages (Client Area)
     public const int WM_MOUSEMOVE = 0x0200;
     public const int WM_LBUTTONDOWN = 0x0201;
     public const int WM_LBUTTONUP = 0x0202;
@@ -16,7 +17,27 @@ public static class NativeConstants
     public const int WM_MOUSEWHEEL = 0x020A;
     public const int WM_XBUTTONDOWN = 0x020B;
     public const int WM_XBUTTONUP = 0x020C;
+    public const int WM_XBUTTONDBLCLK = 0x020D;
     public const int WM_MOUSEHWHEEL = 0x020E;
+
+    // Window Mouse Messages (Non-Client Area like title bars, taskbars, desktop)
+    public const int WM_NCLBUTTONDOWN = 0x00A1;
+    public const int WM_NCLBUTTONUP = 0x00A2;
+    public const int WM_NCRBUTTONDOWN = 0x00A4;
+    public const int WM_NCRBUTTONUP = 0x00A5;
+    public const int WM_NCMBUTTONDOWN = 0x00A7;
+    public const int WM_NCMBUTTONUP = 0x00A8;
+    public const int WM_NCXBUTTONDOWN = 0x00AB;
+    public const int WM_NCXBUTTONUP = 0x00AC;
+    public const int WM_NCXBUTTONDBLCLK = 0x00AD;
+
+    // Keyboard Messages (for gaming mice sending Browser Back / Forward)
+    public const int WM_KEYDOWN = 0x0100;
+    public const int WM_KEYUP = 0x0101;
+    public const int WM_SYSKEYDOWN = 0x0104;
+    public const int WM_SYSKEYUP = 0x0105;
+    public const uint VK_BROWSER_BACK = 0xA6;
+    public const uint VK_BROWSER_FORWARD = 0xA7;
 
     // Quit message for internal hook thread pump
     public const uint WM_QUIT = 0x0012;
@@ -57,4 +78,3 @@ public static class NativeConstants
     public const uint MOUSEEVENTF_WHEEL = 0x0800;
     public const uint MOUSEEVENTF_HWHEEL = 0x1000;
 }
-

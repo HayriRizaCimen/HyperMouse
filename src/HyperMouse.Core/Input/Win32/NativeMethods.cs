@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 namespace HyperMouse.Core.Input.Win32;
 
 public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
 public static class NativeMethods
 {
@@ -10,6 +11,13 @@ public static class NativeMethods
     public static extern IntPtr SetWindowsHookExW(
         int idHook,
         LowLevelMouseProc lpfn,
+        IntPtr hMod,
+        uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookExW(
+        int idHook,
+        LowLevelKeyboardProc lpfn,
         IntPtr hMod,
         uint dwThreadId);
 
@@ -56,6 +64,9 @@ public static class NativeMethods
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern IntPtr GetModuleHandle(string? lpModuleName);
+
     [DllImport("user32.dll")]
     public static extern uint GetDoubleClickTime();
 
@@ -65,4 +76,3 @@ public static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 }
-

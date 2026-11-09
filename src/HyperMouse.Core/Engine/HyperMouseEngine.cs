@@ -48,6 +48,13 @@ public sealed class HyperMouseEngine : IDisposable
         _actionMap[(button, cadence, chord, layer)] = action;
     }
 
+    public bool RemoveAction(MouseButton button, CadenceType cadence, MouseButton chord = MouseButton.None, int layer = 0)
+    {
+        return _actionMap.Remove((button, cadence, chord, layer));
+    }
+
+    public IReadOnlyDictionary<(MouseButton Button, CadenceType Cadence, MouseButton Chord, int Layer), IAction> GetActions() => _actionMap;
+
     public void ClearActions()
     {
         _actionMap.Clear();
