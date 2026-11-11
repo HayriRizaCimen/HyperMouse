@@ -75,6 +75,24 @@ public sealed class ProfileConfig
     public int LongPressThresholdMs { get; set; } = 320;
     public List<MappingRuleDto> Rules { get; set; } = new();
 
+    /// <summary>
+    /// Vendor-specific signals learned from the user's mouse (e.g. DPI button), keyed by the logical button.
+    /// </summary>
+    public Dictionary<MouseButton, LearnedSignal> LearnedSignals { get; set; } = new();
+
+    /// <summary>"System", "Dark" or "Light".</summary>
+    public string Theme { get; set; } = "System";
+
+    /// <summary>Closing the window keeps HyperMouse running in the system tray.</summary>
+    public bool MinimizeToTray { get; set; } = true;
+
+    /// <summary>User-given names for mice, keyed by "VID:PID" (for mice that report a generic name).</summary>
+    public Dictionary<string, string> DeviceAliases { get; set; } = new();
+
+    /// <summary>Rules dropped by the last <see cref="Load"/> because they conflicted with an earlier rule.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<MappingRuleDto> DroppedConflicts { get; } = new();
+
     public static ProfileConfig CreateDefault()
     {
         return new ProfileConfig
@@ -130,6 +148,20 @@ public sealed class ProfileConfig
         };
     }
 
+    /// <summary>Reads a profile for import. Throws with a readable message if the file is not a valid profile.</summary>
+    public static ProfileConfig Import(string filePath)
+    {
+        string json = File.ReadAllText(filePath);
+        var config = JsonSerializer.Deserialize<ProfileConfig>(json)
+                     ?? throw new InvalidDataException("Dosya boş.");
+        if (config.Rules == null) throw new InvalidDataException("Dosyada kural listesi yok.");
+        config.LearnedSignals ??= new();
+        config.DeviceAliases ??= new();
+        config.Theme ??= "System";
+        config.DroppedConflicts.AddRange(RuleConflictChecker.RemoveConflicts(config.Rules));
+        return config;
+    }
+
     public static ProfileConfig Load(string filePath)
     {
         try
@@ -138,7 +170,15 @@ public sealed class ProfileConfig
             {
                 string json = File.ReadAllText(filePath);
                 var config = JsonSerializer.Deserialize<ProfileConfig>(json);
-                if (config != null) return config;
+                if (config != null)
+                {
+                    config.LearnedSignals ??= new();
+                    config.DeviceAliases ??= new();
+                    config.Theme ??= "System";
+                    config.DroppedConflicts.AddRange(RuleConflictChecker.RemoveConflicts(config.Rules));
+                    if (config.DroppedConflicts.Count > 0) Save(config, filePath);
+                    return config;
+                }
             }
         }
         catch
@@ -171,3 +211,24 @@ public sealed class ProfileConfig
     }
 }
 
+
+/// <summary>
+/// Signature of a non-standard mouse signal (consumer usage, keyboard key, HID report, raw button bits).
+/// </summary>
+public sealed class LearnedSignal
+{
+    public string Kind { get; set; } = "";        // Consumer | Key | Hid | RawBits
+    public ushort Vid { get; set; }
+    public ushort Pid { get; set; }
+    public ushort UsagePage { get; set; }
+    public ushort Usage { get; set; }
+    public uint Code { get; set; }                // consumer usage, VK code or raw-button bits
+    public string ReportHex { get; set; } = "";   // for Kind=Hid
+    public bool HasRelease { get; set; }          // false -> one-shot signal, emitted as a tap
+    public string Description { get; set; } = "";
+
+    public bool Matches(LearnedSignal other) =>
+        Kind == other.Kind && Vid == other.Vid && Pid == other.Pid &&
+        UsagePage == other.UsagePage && Usage == other.Usage && Code == other.Code &&
+        string.Equals(ReportHex, other.ReportHex, StringComparison.OrdinalIgnoreCase);
+}

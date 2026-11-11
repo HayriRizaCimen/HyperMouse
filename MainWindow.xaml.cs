@@ -12,10 +12,13 @@ using System.Windows.Threading;
 using HyperMouse.Core.Actions;
 using HyperMouse.Core.Common;
 using MouseButton = HyperMouse.Core.Common.MouseButton;
+using MouseDevice = HyperMouse.Core.Input.RawInput.MouseDevice;
 using HyperMouse.Core.Config;
 using HyperMouse.Core.Engine;
 using HyperMouse.Core.Input;
 using HyperMouse.Core.Input.RawInput;
+using Microsoft.Win32;
+using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
 
 namespace HyperMouse;
@@ -26,6 +29,9 @@ public sealed class RuleDisplayItem
     public string ButtonName { get; set; } = "";
     public string CadenceDescription { get; set; } = "";
     public string ActionDisplay { get; set; } = "";
+    public SymbolRegular Icon { get; set; } = SymbolRegular.Cursor24;
+    public Brush Accent { get; set; } = Brushes.DodgerBlue;
+    public Brush AccentSoft { get; set; } = Brushes.Transparent;
 }
 
 public partial class MainWindow : FluentWindow
@@ -51,9 +57,16 @@ public partial class MainWindow : FluentWindow
     private RuleDisplayItem? _draggedItem;
     private readonly ConcurrentDictionary<MouseButton, long> _lastHookEventTimes = new();
 
-    private readonly SolidColorBrush _activeBrush = new(Color.FromRgb(0x00, 0x78, 0xD4));
-    private readonly SolidColorBrush _dimBrush = new(Color.FromRgb(0x30, 0x36, 0x3D));
-    private readonly SolidColorBrush _dimButtonBrush = new(Color.FromRgb(0x21, 0x26, 0x2D));
+    private DispatcherTimer? _learnTimer;
+    private DispatcherTimer? _deviceRefreshTimer;
+
+    private DispatcherTimer CreateRefreshTimer()
+    {
+        var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+        t.Tick += (_, _) => { t.Stop(); _rawInput?.RefreshDevices(); };
+        return t;
+    }
+    private readonly ObservableCollection<MouseDevice> _miceView = new();
 
     public MainWindow()
     {
@@ -61,6 +74,7 @@ public partial class MainWindow : FluentWindow
 
         RulesListBox.ItemsSource = _rulesList;
         LiveEventListBox.ItemsSource = _eventLogs;
+        MiceList.ItemsSource = _miceView;
 
         _config = new StateMachineConfig();
         _mouseHook = new ThreadedMouseHook();
@@ -81,9 +95,10 @@ public partial class MainWindow : FluentWindow
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Kanca başlatılırken hata: {ex.Message}", "HyperMouse Hatası", System.Windows.MessageBoxButton.OK, MessageBoxImage.Error);
+            System.Windows.MessageBox.Show($"Hook başlatılamadı: {ex.Message}", "HyperMouse Hatası", System.Windows.MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
+        InitTray();
         Loaded += MainWindow_Loaded;
         SourceInitialized += MainWindow_SourceInitialized;
         Closing += MainWindow_Closing;
@@ -99,18 +114,32 @@ public partial class MainWindow : FluentWindow
             if (source != null)
             {
                 _rawInput = new RawInputReceiver();
-                _rawInput.Diagnostic += msg => Dispatcher.BeginInvoke(() => AddLog(msg));
+                _rawInput.Diagnostic += msg => Dispatcher.BeginInvoke(() => AddLog(msg, detail: !msg.StartsWith("[Learn]")));
                 _rawInput.RawMouseEventReceived += OnRawMouseEventReceived;
+                _rawInput.MiceChanged += () => Dispatcher.BeginInvoke(UpdateMouseInfo);
+                _rawInput.DevicesChanged += () =>
+                {
+                    // Windows sends one notification per device (also for all devices at registration): debounce.
+                    _deviceRefreshTimer ??= CreateRefreshTimer();
+                    _deviceRefreshTimer.Stop();
+                    _deviceRefreshTimer.Start();
+                };
+                _rawInput.ActiveMouseChanged += _ => Dispatcher.BeginInvoke(UpdateMouseInfo);
+                _rawInput.LearnCandidate += sig => Dispatcher.BeginInvoke(() => OnLearnCandidate(sig));
+                _rawInput.SignalLearned += sig => Dispatcher.BeginInvoke(() => OnSignalLearned(sig));
+                _rawInput.SetBindings(_profile.LearnedSignals);
                 source.AddHook(_rawInput.ProcessMessage);
+                source.AddHook(WndProc);
+                RegisterEmergencyHotkey(helper.Handle);
                 if (_rawInput.Register(helper.Handle))
                 {
-                    AddLog("[SİSTEM] RawInput (Fare + Klavye + Consumer Control + Vendor HID) ve Shell AppCommand dinleyicisi bağlandı.");
+                    AddLog("[System] RawInput ve AppCommand hazır.");
                 }
             }
         }
         catch (Exception ex)
         {
-            AddLog($"[UYARI] RawInput başlatılamadı: {ex.Message}");
+            AddLog($"[Error] RawInput başlatılamadı: {ex.Message}");
         }
     }
 
@@ -118,7 +147,420 @@ public partial class MainWindow : FluentWindow
     {
         SliderDoubleClick.Value = _profile.DoubleClickThresholdMs;
         SliderLongPress.Value = _profile.LongPressThresholdMs;
-        AddLog("[SİSTEM] HyperMouse hazır. Donanım kancası ve klavye kancası devrede.");
+        LoadAppSettings();
+        AddLog("[System] Hazır. Hook aktif.");
+        foreach (var dropped in _profile.DroppedConflicts)
+            AddLog($"[Conflict] Yinelenen kural silindi: {dropped.Button} {dropped.Cadence} → {dropped.DisplayName}");
+        UpdateMouseInfo();
+        UpdateDpiStatus();
+    }
+
+    // ==========================================
+    // TRAY, HOTKEY, THEME, AUTOSTART, IMPORT/EXPORT
+    // ==========================================
+
+    private System.Windows.Forms.NotifyIcon? _tray;
+    private System.Windows.Forms.ToolStripMenuItem? _trayToggleItem;
+    private bool _exiting;
+    private bool _trayHintShown;
+    private bool _settingsLoading;
+    private IntPtr _hwnd;
+
+    private const int WM_HOTKEY = 0x0312;
+    private const int HotkeyId = 0x4D4D;
+    private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_NOREPEAT = 0x4000;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValue = "HyperMouse";
+
+    /// <summary>Called by App when launched with --tray (autostart).</summary>
+    public void StartHiddenInTray()
+    {
+        // Create the HWND (hooks, RawInput, hotkey) without showing the window.
+        new WindowInteropHelper(this).EnsureHandle();
+        _trayHintShown = true;
+    }
+
+    public void ShowFromTray()
+    {
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        Topmost = true;
+        Topmost = false;
+    }
+
+    private void InitTray()
+    {
+        _tray = new System.Windows.Forms.NotifyIcon
+        {
+            Text = "HyperMouse",
+            Icon = (Environment.ProcessPath is { } exe ? System.Drawing.Icon.ExtractAssociatedIcon(exe) : null) ?? System.Drawing.SystemIcons.Application,
+            Visible = true
+        };
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("Göster", null, (_, _) => Dispatcher.Invoke(ShowFromTray));
+        _trayToggleItem = new System.Windows.Forms.ToolStripMenuItem("Duraklat", null, (_, _) => Dispatcher.Invoke(() => EngineToggle.IsChecked = !(EngineToggle.IsChecked == true)));
+        menu.Items.Add(_trayToggleItem);
+        menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        menu.Items.Add("Çıkış", null, (_, _) => Dispatcher.Invoke(ExitApp));
+        _tray.ContextMenuStrip = menu;
+        _tray.MouseClick += (_, e) => { if (e.Button == System.Windows.Forms.MouseButtons.Left) Dispatcher.Invoke(ShowFromTray); };
+    }
+
+    private void UpdateTrayState(bool active)
+    {
+        if (_tray == null) return;
+        _tray.Text = active ? "HyperMouse — aktif" : "HyperMouse — duraklatıldı";
+        if (_trayToggleItem != null) _trayToggleItem.Text = active ? "Duraklat" : "Başlat";
+    }
+
+    private void BtnExitApp_Click(object sender, RoutedEventArgs e) => ExitApp();
+
+    private void ExitApp()
+    {
+        _exiting = true;
+        Close();
+    }
+
+    private void RegisterEmergencyHotkey(IntPtr hwnd)
+    {
+        _hwnd = hwnd;
+        bool ok = RegisterHotKey(hwnd, HotkeyId, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, (uint)'M');
+        AddLog(ok ? "[Hotkey] Ctrl+Alt+Shift+M kayıtlı." : "[Hotkey] Ctrl+Alt+Shift+M başka bir program tarafından kullanılıyor.");
+        if (!ok && TxtHotkeyStatus != null) TxtHotkeyStatus.Text = "Kısayol başka bir program tarafından kullanılıyor.";
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_HOTKEY && (int)wParam == HotkeyId)
+        {
+            EngineToggle.IsChecked = !(EngineToggle.IsChecked == true);
+            bool active = EngineToggle.IsChecked == true;
+            _tray?.ShowBalloonTip(1500, "HyperMouse", active ? "Motor açıldı." : "Motor duraklatıldı.", System.Windows.Forms.ToolTipIcon.None);
+            handled = true;
+        }
+        return IntPtr.Zero;
+    }
+
+    private void LoadAppSettings()
+    {
+        _settingsLoading = true;
+        SelectComboByTag(CmbTheme, _profile.Theme);
+        ToggleTray.IsChecked = _profile.MinimizeToTray;
+        ToggleAutostart.IsChecked = IsAutostartEnabled();
+        _settingsLoading = false;
+        ApplyTheme(_profile.Theme);
+    }
+
+    private void ApplyTheme(string theme)
+    {
+        switch (theme)
+        {
+            case "Light": ApplicationThemeManager.Apply(ApplicationTheme.Light, WindowBackdropType.Mica); break;
+            case "Dark": ApplicationThemeManager.Apply(ApplicationTheme.Dark, WindowBackdropType.Mica); break;
+            default: ApplicationThemeManager.ApplySystemTheme(); break;
+        }
+    }
+
+    private void CmbTheme_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_settingsLoading || _profile == null) return;
+        string theme = (CmbTheme.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "System";
+        _profile.Theme = theme;
+        ProfileConfig.Save(_profile, ConfigPath);
+        ApplyTheme(theme);
+    }
+
+    private void ToggleTray_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_settingsLoading || _profile == null) return;
+        _profile.MinimizeToTray = ToggleTray.IsChecked == true;
+        ProfileConfig.Save(_profile, ConfigPath);
+    }
+
+    private static bool IsAutostartEnabled()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+            return key?.GetValue(RunValue) is string;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void ToggleAutostart_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_settingsLoading) return;
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RunKey);
+            if (ToggleAutostart.IsChecked == true && Environment.ProcessPath is { } exe)
+            {
+                key.SetValue(RunValue, $"\"{exe}\" --tray");
+                AddLog("[System] Windows ile başlatma açıldı.");
+            }
+            else
+            {
+                key.DeleteValue(RunValue, false);
+                AddLog("[System] Windows ile başlatma kapatıldı.");
+            }
+        }
+        catch (Exception ex)
+        {
+            AddLog($"[Error] Autostart: {ex.Message}");
+        }
+    }
+
+    private void BtnExport_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new SaveFileDialog
+        {
+            Title = "Profili dışa aktar",
+            Filter = "HyperMouse profili (*.json)|*.json",
+            FileName = $"HyperMouse-{DateTime.Now:yyyy-MM-dd}.json"
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        ProfileConfig.Save(_profile, dlg.FileName);
+        AddLog($"[Profile] Dışa aktarıldı: {dlg.FileName}");
+    }
+
+    private void BtnImport_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog { Title = "Profil içe aktar", Filter = "HyperMouse profili (*.json)|*.json" };
+        if (dlg.ShowDialog(this) != true) return;
+
+        ProfileConfig imported;
+        try
+        {
+            imported = ProfileConfig.Import(dlg.FileName);
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"Dosya okunamadı: {ex.Message}", "İçe aktar", System.Windows.MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var res = System.Windows.MessageBox.Show($"{imported.Rules.Count} kural yüklenecek, mevcut kurallar değişecek. Devam edilsin mi?",
+            "İçe aktar", System.Windows.MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (res != System.Windows.MessageBoxResult.Yes) return;
+
+        _profile = imported;
+        ProfileConfig.Save(_profile, ConfigPath);
+        ApplyProfileToEngine();
+        SliderDoubleClick.Value = _profile.DoubleClickThresholdMs;
+        SliderLongPress.Value = _profile.LongPressThresholdMs;
+        LoadAppSettings();
+        UpdateMouseInfo();
+        UpdateDpiStatus();
+        AddLog($"[Profile] İçe aktarıldı: {imported.Rules.Count} kural" +
+               (imported.DroppedConflicts.Count > 0 ? $", {imported.DroppedConflicts.Count} çakışan kural atlandı." : "."));
+    }
+
+    // ==========================================
+    // NAVIGATION & DEVICE INFO
+    // ==========================================
+
+    private void Nav_Checked(object sender, RoutedEventArgs e)
+    {
+        if (PageRules == null || PageLive == null || PageSettings == null) return;
+        string tag = (sender as FrameworkElement)?.Tag?.ToString() ?? "Rules";
+        PageRules.Visibility = tag == "Rules" ? Visibility.Visible : Visibility.Collapsed;
+        PageLive.Visibility = tag == "Live" ? Visibility.Visible : Visibility.Collapsed;
+        PageSettings.Visibility = tag == "Settings" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateMouseInfo()
+    {
+        if (_rawInput == null)
+        {
+            TxtMouseModel.Text = "Fare bilgisi okunamadı";
+            return;
+        }
+
+        var mice = _rawInput.Mice.Where(m => m.Vid != 0).ToList();
+        _miceView.Clear();
+        foreach (var m in _rawInput.Mice) _miceView.Add(m);
+        TxtMouseCount.Text = $"{mice.Count} aygıt";
+
+        var current = _rawInput.ActiveMouse is { Vid: not 0 } a ? a : mice.FirstOrDefault();
+        if (current == null)
+        {
+            TxtMouseModel.Text = "Tanınan fare yok";
+            TxtMouseDetails.Text = "Tuşlar yine de çalışır.";
+            return;
+        }
+
+        _currentMouse = current;
+        bool hasAlias = _profile.DeviceAliases.TryGetValue(current.VidPid, out var alias) && !string.IsNullOrWhiteSpace(alias);
+        TxtMouseModel.Text = hasAlias ? alias : current.DisplayName;
+        TxtMouseModel.ToolTip = hasAlias ? $"Orijinal ad: {current.DisplayName}" : null;
+        string vendor = MouseVendors.Lookup(current.Vid);
+        string active = _rawInput.ActiveMouse?.Handle == current.Handle ? "Kullanılıyor" : "Bağlı";
+        TxtMouseDetails.Text = $"{active} · {current.Connection} · VID:PID {current.VidPid}" + (vendor.Length > 0 ? $" · {vendor}" : "");
+        MouseConnIcon.Symbol = current.Connection == "Bluetooth" ? SymbolRegular.Bluetooth24 : SymbolRegular.UsbStick24;
+    }
+
+    private MouseDevice? _currentMouse;
+
+    private void BtnRenameMouse_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentMouse == null) return;
+        if (TxtMouseAlias.Visibility == Visibility.Visible)
+        {
+            CommitMouseAlias();
+            return;
+        }
+        TxtMouseAlias.Text = TxtMouseModel.Text;
+        TxtMouseModel.Visibility = Visibility.Collapsed;
+        TxtMouseAlias.Visibility = Visibility.Visible;
+        BtnRenameMouse.Icon = new SymbolIcon { Symbol = SymbolRegular.Checkmark16 };
+        TxtMouseAlias.Focus();
+        TxtMouseAlias.SelectAll();
+    }
+
+    private void TxtMouseAlias_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) CommitMouseAlias();
+        else if (e.Key == Key.Escape) EndAliasEdit();
+    }
+
+    private void CommitMouseAlias()
+    {
+        if (_currentMouse != null)
+        {
+            string name = TxtMouseAlias.Text.Trim();
+            if (name.Length == 0 || name == _currentMouse.DisplayName) _profile.DeviceAliases.Remove(_currentMouse.VidPid);
+            else _profile.DeviceAliases[_currentMouse.VidPid] = name;
+            ProfileConfig.Save(_profile, ConfigPath);
+        }
+        EndAliasEdit();
+        UpdateMouseInfo();
+    }
+
+    private void EndAliasEdit()
+    {
+        TxtMouseAlias.Visibility = Visibility.Collapsed;
+        TxtMouseModel.Visibility = Visibility.Visible;
+        BtnRenameMouse.Icon = new SymbolIcon { Symbol = SymbolRegular.Edit16 };
+    }
+
+    private void UpdateDpiStatus()
+    {
+        bool learned = _profile.LearnedSignals.TryGetValue(MouseButton.DpiButton, out var sig);
+        TxtDpiStatus.Text = learned ? "DPI tuşu hazır" : "DPI tuşu öğretilmedi";
+        BtnForgetDpi.Visibility = learned ? Visibility.Visible : Visibility.Collapsed;
+        if (_rawInput?.IsLearning != true)
+        {
+            TxtLearnStatus.Text = learned
+                ? $"Hazır: {sig!.Description}. Kurallarda 'DPI Tuşu'nu seçebilirsiniz."
+                : "'Öğren'e, sonra DPI tuşuna basın.";
+        }
+        ValidateEditor();
+    }
+
+    // ==========================================
+    // LEARN MODE (DPI / vendor buttons)
+    // ==========================================
+
+    private const double LearnSeconds = 3.0;
+    private DateTime _learnStarted;
+    private DispatcherTimer? _countdownTimer;
+
+    private void BtnLearnDpi_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rawInput == null) return;
+        if (_rawInput.IsLearning)
+        {
+            StopLearn("İptal edildi.");
+            return;
+        }
+
+        _rawInput.BeginLearn();
+        BtnLearnDpi.Content = "İptal";
+        TxtLearnStatus.Text = "DPI tuşuna şimdi basın.";
+        AddLog("[Learn] DPI tuşu bekleniyor…");
+
+        // Countdown ring
+        _learnStarted = DateTime.Now;
+        LearnIcon.Visibility = Visibility.Collapsed;
+        LearnCountdown.Visibility = Visibility.Visible;
+        _countdownTimer?.Stop();
+        _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
+        _countdownTimer.Tick += (_, _) =>
+        {
+            double left = LearnSeconds - (DateTime.Now - _learnStarted).TotalSeconds;
+            if (left <= 0)
+            {
+                StopLearn("Sinyal gelmedi. Bu farenin DPI tuşu bilgisayara sinyal göndermiyor olabilir.");
+                return;
+            }
+            LearnRing.Progress = left / LearnSeconds * 100;
+            LearnCountdownText.Text = Math.Ceiling(left).ToString("0");
+        };
+        _countdownTimer.Start();
+    }
+
+    private void HideCountdown()
+    {
+        _countdownTimer?.Stop();
+        LearnCountdown.Visibility = Visibility.Collapsed;
+        LearnIcon.Visibility = Visibility.Visible;
+    }
+
+    private void StopLearn(string message)
+    {
+        HideCountdown();
+        _learnTimer?.Stop();
+        _rawInput?.CancelLearn();
+        BtnLearnDpi.Content = "Öğren";
+        TxtLearnStatus.Text = message;
+        AddLog($"[Learn] {message}");
+    }
+
+    private void OnLearnCandidate(LearnedSignal sig)
+    {
+        HideCountdown();
+        TxtLearnStatus.Text = $"Sinyal alındı: {sig.Description}";
+        // One-shot signals never send a release; finish after a short grace period.
+        _learnTimer?.Stop();
+        _learnTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _learnTimer.Tick += (_, _) => { _learnTimer!.Stop(); _rawInput?.CompleteLearn(); };
+        _learnTimer.Start();
+    }
+
+    private void OnSignalLearned(LearnedSignal sig)
+    {
+        _learnTimer?.Stop();
+        BtnLearnDpi.Content = "Öğren";
+        _profile.LearnedSignals[MouseButton.DpiButton] = sig;
+        ProfileConfig.Save(_profile, ConfigPath);
+        _rawInput?.SetBindings(_profile.LearnedSignals);
+        AddLog($"[Learn ✓] DPI tuşu kaydedildi: {sig.Description}");
+        UpdateDpiStatus();
+    }
+
+    private void BtnForgetDpi_Click(object sender, RoutedEventArgs e)
+    {
+        _profile.LearnedSignals.Remove(MouseButton.DpiButton);
+        ProfileConfig.Save(_profile, ConfigPath);
+        _rawInput?.SetBindings(_profile.LearnedSignals);
+        AddLog("[Learn] DPI tuşu silindi.");
+        UpdateDpiStatus();
+    }
+
+    private void ChkVerboseHid_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_rawInput != null) _rawInput.VerboseDiagnostics = ChkVerboseHid.IsChecked == true;
     }
 
     private void ApplyProfileToEngine()
@@ -139,40 +581,66 @@ public partial class MainWindow : FluentWindow
             }
         }
 
-        RuleCountText.Text = $"({_rulesList.Count} Kural)";
+        RuleCountText.Text = $"{_rulesList.Count} kural";
+        EmptyRulesPanel.Visibility = _rulesList.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _rawInput?.SetBindings(_profile.LearnedSignals);
+    }
+
+    public static string ButtonDisplayName(MouseButton b) => b switch
+    {
+        MouseButton.XButton1 => "Yan Tuş 1 (Geri)",
+        MouseButton.XButton2 => "Yan Tuş 2 (İleri)",
+        MouseButton.Middle => "Orta Tuş",
+        MouseButton.Right => "Sağ Tuş",
+        MouseButton.Left => "Sol Tuş",
+        MouseButton.WheelUp => "Tekerlek Yukarı",
+        MouseButton.WheelDown => "Tekerlek Aşağı",
+        MouseButton.WheelTiltLeft => "Tekerlek Sola",
+        MouseButton.WheelTiltRight => "Tekerlek Sağa",
+        MouseButton.DpiButton => "DPI Tuşu",
+        _ => b.ToString()
+    };
+
+    private static SolidColorBrush Rgb(byte r, byte g, byte b, byte a = 0xFF)
+    {
+        var br = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        br.Freeze();
+        return br;
     }
 
     private static RuleDisplayItem CreateDisplayItem(MappingRuleDto rule)
     {
-        string btnName = rule.Button switch
+        var icon = rule.Button switch
         {
-            MouseButton.XButton1 => "◀ Yan Tuş 1 (Geri Tuşu)",
-            MouseButton.XButton2 => "▶ Yan Tuş 2 (İleri Tuşu)",
-            MouseButton.Middle => "🔘 Orta Tuş (Tekerlek Tıkı)",
-            MouseButton.Right => "🔘 Sağ Tuş",
-            MouseButton.Left => "🔘 Sol Tuş",
-            MouseButton.WheelUp => "🔼 Tekerlek Yukarı",
-            MouseButton.WheelDown => "🔽 Tekerlek Aşağı",
-            _ => rule.Button.ToString()
+            MouseButton.XButton1 => SymbolRegular.ArrowCircleLeft24,
+            MouseButton.XButton2 => SymbolRegular.ArrowCircleRight24,
+            MouseButton.WheelUp => SymbolRegular.ArrowCircleUp24,
+            MouseButton.WheelDown => SymbolRegular.ArrowCircleDown24,
+            MouseButton.WheelTiltLeft or MouseButton.WheelTiltRight => SymbolRegular.ArrowBidirectionalLeftRight24,
+            MouseButton.DpiButton => SymbolRegular.Gauge24,
+            _ => SymbolRegular.CursorClick24
         };
 
-        string cadenceDesc = rule.Cadence switch
+        (string text, byte r, byte g, byte b) = rule.Cadence switch
         {
-            CadenceType.SingleClick => "Tetikleyici: Tek Tık (Single Click)",
-            CadenceType.DoubleClick => "Tetikleyici: Çift Tık (Double Click)",
-            CadenceType.TripleClick => "Tetikleyici: Üçlü Tık (Triple Click)",
-            CadenceType.LongPress => "Tetikleyici: Uzun Basma (Long Press > 320ms)",
-            CadenceType.PressAndHoldDown => "Tetikleyici: Bas-Çek (Press & Hold)",
-            CadenceType.Chord => $"Tetikleyici: Kombinasyon (Tuşa Basılıyken + {rule.ChordSecondary})",
-            _ => rule.Cadence.ToString()
+            CadenceType.SingleClick => ("Tek Tık", (byte)0x3B, (byte)0x8E, (byte)0xEA),
+            CadenceType.DoubleClick => ("Çift Tık", (byte)0x8B, (byte)0x5C, (byte)0xF6),
+            CadenceType.TripleClick => ("Üçlü Tık", (byte)0xD9, (byte)0x46, (byte)0xEF),
+            CadenceType.LongPress => ("Uzun Basma", (byte)0xF5, (byte)0x9E, (byte)0x0B),
+            CadenceType.PressAndHoldDown => ("Bas-Çek", (byte)0xF9, (byte)0x73, (byte)0x16),
+            CadenceType.Chord => ($"+ {ButtonDisplayName(rule.ChordSecondary)}", (byte)0x10, (byte)0xB9, (byte)0x81),
+            _ => (rule.Cadence.ToString(), (byte)0x94, (byte)0xA3, (byte)0xB8)
         };
 
         return new RuleDisplayItem
         {
             Dto = rule,
-            ButtonName = btnName,
-            CadenceDescription = cadenceDesc,
-            ActionDisplay = !string.IsNullOrEmpty(rule.DisplayName) ? rule.DisplayName : $"{rule.ActionType}: {rule.Parameter}"
+            ButtonName = ButtonDisplayName(rule.Button) + (rule.Layer > 0 ? $"  ·  Katman {rule.Layer}" : ""),
+            CadenceDescription = text,
+            ActionDisplay = !string.IsNullOrEmpty(rule.DisplayName) ? rule.DisplayName : $"{rule.ActionType}: {rule.Parameter}",
+            Icon = icon,
+            Accent = Rgb(r, g, b),
+            AccentSoft = Rgb(r, g, b, 0x26)
         };
     }
 
@@ -182,12 +650,13 @@ public partial class MainWindow : FluentWindow
 
         Dispatcher.BeginInvoke(() =>
         {
-            TxtDetectedEvent.Text = $"{ev.Button} [{ev.EventType}]";
-            HighlightVisualButton(ev.Button, ev.EventType == MouseEventType.Down);
+            TxtDetectedEvent.Text = $"{ev.Button} {ev.EventType}";
+            HighlightVisualButton(ev.Button, ev.EventType is MouseEventType.Down or MouseEventType.Wheel or MouseEventType.HWheel);
 
             if (ev.EventType is MouseEventType.Down or MouseEventType.Wheel or MouseEventType.HWheel)
             {
-                AddLog($"[KANCADAN] {ev.Button} {ev.EventType} yakalandı.");
+                if (ev.EventType == MouseEventType.Down) AddLog($"{ButtonDisplayName(ev.Button)} basıldı");
+                else AddLog($"[Hook] {ev.Button} {ev.EventType}", detail: true);
             }
         });
     }
@@ -203,6 +672,16 @@ public partial class MainWindow : FluentWindow
     /// </summary>
     private void OnRawMouseEventReceived(RawMouseEvent ev, RawSource source)
     {
+        // Learned vendor buttons (DPI) are never seen by WH_MOUSE_LL: feed them straight to the engine.
+        if (ev.Button == MouseButton.DpiButton)
+        {
+            TxtDetectedEvent.Text = $"DpiButton {ev.EventType}";
+            HighlightVisualButton(ev.Button, ev.EventType == MouseEventType.Down);
+            if (ev.EventType == MouseEventType.Down) AddLog("DPI Tuşu basıldı");
+            _engine.StateMachine.ProcessEvent(ev with { TimestampMs = Environment.TickCount64 });
+            return;
+        }
+
         // Only side buttons need fallback; L/R/M/wheel are always seen by WH_MOUSE_LL.
         if (ev.Button is not (MouseButton.XButton1 or MouseButton.XButton2)) return;
 
@@ -239,17 +718,17 @@ public partial class MainWindow : FluentWindow
 
         string srcName = source switch
         {
-            RawSource.ConsumerControl => "CONSUMER CONTROL",
-            RawSource.Keyboard => "HID KLAVYE",
-            RawSource.AppCommand => "APPCOMMAND",
-            _ => "RAW FARE"
+            RawSource.ConsumerControl => "Consumer Control",
+            RawSource.Keyboard => "HID Keyboard",
+            RawSource.AppCommand => "AppCommand",
+            _ => "RawInput"
         };
 
-        TxtDetectedEvent.Text = $"[{srcName}] {ev.Button} [{ev.EventType}]";
+        TxtDetectedEvent.Text = $"{ev.Button} {ev.EventType} ({srcName})";
         HighlightVisualButton(ev.Button, ev.EventType == MouseEventType.Down);
         if (ev.EventType == MouseEventType.Down)
         {
-            AddLog($"[YAN TUŞ ✓] {ev.Button} yakalandı (kaynak: {srcName}).");
+            AddLog($"{ButtonDisplayName(ev.Button)} basıldı ({srcName})");
         }
 
         var adjusted = ev with { TimestampMs = now };
@@ -258,42 +737,7 @@ public partial class MainWindow : FluentWindow
 
     private void HighlightVisualButton(MouseButton button, bool isDown)
     {
-        var wheelBrush = isDown ? _activeBrush : _dimBrush;
-
-        switch (button)
-        {
-            case MouseButton.Left:
-                VisualLeftButton.Background = isDown ? _activeBrush : _dimButtonBrush;
-                break;
-            case MouseButton.Right:
-                VisualRightButton.Background = isDown ? _activeBrush : _dimButtonBrush;
-                break;
-            case MouseButton.Middle:
-            case MouseButton.WheelUp:
-            case MouseButton.WheelDown:
-                VisualMiddleButton.Background = wheelBrush;
-                break;
-            case MouseButton.XButton1:
-                VisualX1Button.Background = isDown ? _activeBrush : _dimBrush;
-                break;
-            case MouseButton.XButton2:
-                VisualX2Button.Background = isDown ? _activeBrush : _dimBrush;
-                break;
-        }
-
-        if (!isDown)
-        {
-            if (button is MouseButton.WheelUp or MouseButton.WheelDown or MouseButton.Middle)
-            {
-                var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-                timer.Tick += (s, e) =>
-                {
-                    VisualMiddleButton.Background = _dimBrush;
-                    timer.Stop();
-                };
-                timer.Start();
-            }
-        }
+        MouseVisual3D?.SetButtonState(button, isDown);
     }
 
     private void OnTriggerFired(GestureTrigger trigger)
@@ -302,16 +746,17 @@ public partial class MainWindow : FluentWindow
         {
             string cadenceStr = trigger.Cadence switch
             {
-                CadenceType.SingleClick => "Tek Tık (Single Click)",
-                CadenceType.DoubleClick => "Çift Tık (Double Click)",
-                CadenceType.TripleClick => "Üçlü Tık (Triple Click)",
-                CadenceType.LongPress => "Uzun Basma (Long Press)",
-                CadenceType.Chord => $"Kombinasyon: {trigger.Button} + {trigger.ChordSecondary}",
+                CadenceType.SingleClick => "Tek Tık",
+                CadenceType.DoubleClick => "Çift Tık",
+                CadenceType.TripleClick => "Üçlü Tık",
+                CadenceType.LongPress => "Uzun Basma",
+                CadenceType.PressAndHoldDown => "Bas-Çek",
+                CadenceType.Chord => $"{ButtonDisplayName(trigger.Button)} + {ButtonDisplayName(trigger.ChordSecondary)}",
                 _ => trigger.Cadence.ToString()
             };
 
-            TxtDetectedCadence.Text = cadenceStr;
-            AddLog($"[EYLEM TETİKLENDİ] {trigger.Button} -> {cadenceStr}");
+            TxtDetectedCadence.Text = $"{ButtonDisplayName(trigger.Button)} · {cadenceStr}";
+            AddLog($"▶ {ButtonDisplayName(trigger.Button)} · {cadenceStr}");
         });
     }
 
@@ -444,19 +889,22 @@ public partial class MainWindow : FluentWindow
         int last = _dragContainers.Count - 1;
         double dy = pos.Y - _dragStartPoint.Y;
 
-        // Keep the card inside the list bounds
-        double minDy = _dragTops[0] - _dragTops[idx];
-        double maxDy = (_dragTops[last] + _dragHeights[last]) - (_dragTops[idx] + _dragHeights[idx]);
+        // Let the card travel a little past the ends so the first/last slot is always reachable
+        double slack = _dragHeights[idx] * 0.6;
+        double minDy = _dragTops[0] - _dragTops[idx] - slack;
+        double maxDy = (_dragTops[last] + _dragHeights[last]) - (_dragTops[idx] + _dragHeights[idx]) + slack;
         dy = Math.Clamp(dy, minDy, maxDy);
         _dragTranslate!.Y = dy;
 
-        // Determine target slot from the dragged card's centre
+        AutoScrollWhileDragging(pos);
+
+        // Target slot = where the dragged card's centre is; crossing a neighbour's midpoint moves the gap (>= / <=)
         double center = _dragTops[idx] + _dragHeights[idx] / 2 + dy;
         int target = idx;
         for (int i = idx + 1; i <= last; i++)
-            if (center > _dragTops[i] + _dragHeights[i] / 2) target = i;
+            if (center >= _dragTops[i] + _dragHeights[i] / 2) target = i;
         for (int i = idx - 1; i >= 0; i--)
-            if (center < _dragTops[i] + _dragHeights[i] / 2) target = i;
+            if (center <= _dragTops[i] + _dragHeights[i] / 2) target = i;
 
         if (target == _dragTarget) return;
         _dragTarget = target;
@@ -476,6 +924,36 @@ public partial class MainWindow : FluentWindow
                     new DoubleAnimation(offset, TimeSpan.FromMilliseconds(180)) { EasingFunction = SlideEase });
             }
         }
+    }
+
+    private ScrollViewer? _rulesScroll;
+
+    private void AutoScrollWhileDragging(Point pos)
+    {
+        _rulesScroll ??= FindVisualChild<ScrollViewer>(RulesListBox);
+        if (_rulesScroll == null || _rulesScroll.ScrollableHeight <= 0) return;
+        const double edge = 36;
+        double before = _rulesScroll.VerticalOffset;
+        if (pos.Y < edge) _rulesScroll.ScrollToVerticalOffset(before - 8);
+        else if (pos.Y > RulesListBox.ActualHeight - edge) _rulesScroll.ScrollToVerticalOffset(before + 8);
+        double moved = _rulesScroll.VerticalOffset - before;
+        if (moved != 0)
+        {
+            // Content moved under the cursor: keep cached slot positions in sync
+            for (int i = 0; i < _dragTops.Count; i++) _dragTops[i] -= moved;
+            _dragStartPoint.Y -= moved;
+        }
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T t) return t;
+            if (FindVisualChild<T>(child) is T found) return found;
+        }
+        return null;
     }
 
     private void EndDrag()
@@ -527,7 +1005,7 @@ public partial class MainWindow : FluentWindow
             _profile.Rules.AddRange(ordered);
 
             ProfileConfig.Save(_profile, ConfigPath);
-            AddLog($"[SIRALAMA] '{moved.ButtonName}' kuralı {oldIndex + 1}. sıradan {newIndex + 1}. sıraya taşındı.");
+            AddLog($"[Rules] '{moved.ButtonName}' {oldIndex + 1} → {newIndex + 1}");
         }
 
         _dragContainers.Clear();
@@ -555,8 +1033,9 @@ public partial class MainWindow : FluentWindow
     private void BtnToggleAddRule_Click(object sender, RoutedEventArgs e)
     {
         _editingRule = null;
-        AddRuleTitle.Text = "✨ Yeni Tuş Eşlemesi Ekle";
+        AddRuleTitle.Text = "Yeni Tuş Eşlemesi";
         AddRuleCard.Visibility = AddRuleCard.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        ValidateEditor();
     }
 
     private void BtnCancelAddRule_Click(object sender, RoutedEventArgs e)
@@ -570,7 +1049,7 @@ public partial class MainWindow : FluentWindow
         if (sender is Wpf.Ui.Controls.Button btn && btn.Tag is RuleDisplayItem item)
         {
             _editingRule = item.Dto;
-            AddRuleTitle.Text = $"✏️ Kuralı Düzenle ({item.ButtonName})";
+            AddRuleTitle.Text = $"Kuralı Düzenle — {item.ButtonName}";
 
             // Select Target Button
             SelectComboByTag(CmbTargetButton, item.Dto.Button.ToString());
@@ -598,6 +1077,7 @@ public partial class MainWindow : FluentWindow
             }
 
             AddRuleCard.Visibility = Visibility.Visible;
+            ValidateEditor();
         }
     }
 
@@ -619,6 +1099,75 @@ public partial class MainWindow : FluentWindow
         var item = CmbCadence.SelectedItem as ComboBoxItem;
         string tag = item?.Tag?.ToString() ?? "";
         ChordSecondaryPanel.Visibility = tag == "Chord" ? Visibility.Visible : Visibility.Collapsed;
+        ValidateEditor();
+    }
+
+    private void Editor_SelectionChanged(object sender, SelectionChangedEventArgs e) => ValidateEditor();
+    private void Editor_TextChanged(object sender, TextChangedEventArgs e) => ValidateEditor();
+
+    /// <summary>Builds a rule from the editor fields (null if incomplete).</summary>
+    private MappingRuleDto? BuildCandidateRule()
+    {
+        if (CmbTargetButton?.SelectedItem is not ComboBoxItem btnItem ||
+            CmbCadence?.SelectedItem is not ComboBoxItem cadenceItem ||
+            CmbActionType?.SelectedItem is not ComboBoxItem actionItem) return null;
+        if (!Enum.TryParse<MouseButton>(btnItem.Tag?.ToString(), out var targetBtn)) return null;
+        if (!Enum.TryParse<CadenceType>(cadenceItem.Tag?.ToString(), out var cadence)) return null;
+
+        string actionType = actionItem.Tag?.ToString() ?? "Hotkey";
+        string parameter, displayName;
+        if (actionType == "Media")
+        {
+            var mediaItem = CmbMediaAction.SelectedItem as ComboBoxItem;
+            parameter = mediaItem?.Tag?.ToString() ?? "VolumeUp";
+            displayName = mediaItem?.Content?.ToString() ?? parameter;
+        }
+        else
+        {
+            parameter = TxtActionParam?.Text.Trim() ?? "";
+            displayName = actionType switch
+            {
+                "Hotkey" => $"Kısayol: {parameter}",
+                "Text" => $"Metin: {parameter}",
+                "Launch" => $"Aç: {parameter}",
+                "Mouse" => $"Fare: {parameter}",
+                _ => $"{actionType}: {parameter}"
+            };
+        }
+
+        MouseButton chordSecondary = MouseButton.None;
+        if (cadence == CadenceType.Chord)
+            Enum.TryParse((CmbChordSecondary.SelectedItem as ComboBoxItem)?.Tag?.ToString(), out chordSecondary);
+
+        return new MappingRuleDto
+        {
+            Button = targetBtn,
+            Cadence = cadence,
+            ChordSecondary = chordSecondary,
+            Layer = _editingRule?.Layer ?? 0,
+            ActionType = actionType,
+            Parameter = parameter,
+            DisplayName = displayName
+        };
+    }
+
+    /// <summary>Live check: a button + cadence may carry only one action. Disables Save on conflict.</summary>
+    private RuleConflict? ValidateEditor()
+    {
+        if (ConflictInfo == null || BtnSaveRule == null || DpiHintInfo == null) return null;
+        var candidate = BuildCandidateRule();
+        RuleConflict? conflict = candidate == null ? null : RuleConflictChecker.FindConflict(_profile.Rules, candidate, _editingRule);
+
+        if (conflict != null)
+        {
+            var ex = conflict.Existing;
+            ConflictInfo.Message = $"{conflict.Reason} Mevcut: {ButtonDisplayName(ex.Button)} · {CreateDisplayItem(ex).CadenceDescription} → " +
+                                   $"{(string.IsNullOrEmpty(ex.DisplayName) ? ex.Parameter : ex.DisplayName)}";
+        }
+        ConflictInfo.IsOpen = conflict != null;
+        BtnSaveRule.IsEnabled = conflict == null;
+        DpiHintInfo.IsOpen = candidate?.Button == MouseButton.DpiButton && !_profile.LearnedSignals.ContainsKey(MouseButton.DpiButton);
+        return conflict;
     }
 
     private void CmbActionType_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -631,7 +1180,7 @@ public partial class MainWindow : FluentWindow
         {
             TxtActionParam.Visibility = Visibility.Collapsed;
             CmbMediaAction.Visibility = Visibility.Visible;
-            ActionParamLabel.Text = "Medya Komutu:";
+            ActionParamLabel.Text = "4 · Medya komutu";
         }
         else
         {
@@ -639,82 +1188,46 @@ public partial class MainWindow : FluentWindow
             CmbMediaAction.Visibility = Visibility.Collapsed;
             ActionParamLabel.Text = tag switch
             {
-                "Hotkey" => "Kısayol Tuşu (Örn: Ctrl+C):",
-                "Text" => "Yazılacak Metin:",
-                "Launch" => "Program / URL Yolu:",
-                "Mouse" => "Fare Tuşu (Left, Right, Middle):",
-                _ => "Parametre:"
+                "Hotkey" => "4 · Kısayol (Ctrl+C)",
+                "Text" => "4 · Yazılacak metin",
+                "Launch" => "4 · Program / URL",
+                "Mouse" => "4 · Fare tuşu (Left/Right/Middle)",
+                _ => "4 · Parametre"
             };
         }
+        ValidateEditor();
     }
 
     private void BtnSaveRule_Click(object sender, RoutedEventArgs e)
     {
-        var btnItem = CmbTargetButton.SelectedItem as ComboBoxItem;
-        var cadenceItem = CmbCadence.SelectedItem as ComboBoxItem;
-        var actionItem = CmbActionType.SelectedItem as ComboBoxItem;
+        var newRule = BuildCandidateRule();
+        if (newRule == null) return;
 
-        if (btnItem == null || cadenceItem == null || actionItem == null) return;
-
-        if (!Enum.TryParse<MouseButton>(btnItem.Tag?.ToString(), out var targetBtn)) return;
-        if (!Enum.TryParse<CadenceType>(cadenceItem.Tag?.ToString(), out var cadence)) return;
-
-        string actionType = actionItem.Tag?.ToString() ?? "Hotkey";
-        string parameter = "";
-        string displayName = "";
-
-        if (actionType == "Media")
+        if (newRule.ActionType != "Media" && string.IsNullOrEmpty(newRule.Parameter))
         {
-            var mediaItem = CmbMediaAction.SelectedItem as ComboBoxItem;
-            parameter = mediaItem?.Tag?.ToString() ?? "VolumeUp";
-            displayName = mediaItem?.Content?.ToString() ?? parameter;
-        }
-        else
-        {
-            parameter = TxtActionParam.Text.Trim();
-            if (string.IsNullOrEmpty(parameter))
-            {
-                System.Windows.MessageBox.Show("Lütfen eylem parametresini giriniz (Örn: Ctrl+C)", "Eksik Bilgi", System.Windows.MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-            displayName = $"{actionType}: {parameter}";
+            System.Windows.MessageBox.Show("Eylem değerini girin (örn. Ctrl+C).", "Eksik bilgi", System.Windows.MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
         }
 
-        MouseButton chordSecondary = MouseButton.None;
-        if (cadence == CadenceType.Chord)
-        {
-            var chordItem = CmbChordSecondary.SelectedItem as ComboBoxItem;
-            Enum.TryParse(chordItem?.Tag?.ToString(), out chordSecondary);
-        }
+        if (ValidateEditor() != null) return; // conflict: never overwrite silently
 
         if (_editingRule != null)
         {
-            // Update existing rule
-            _profile.Rules.Remove(_editingRule);
+            int idx = _profile.Rules.IndexOf(_editingRule);
+            if (idx >= 0) _profile.Rules[idx] = newRule;
+            else _profile.Rules.Add(newRule);
             _editingRule = null;
         }
         else
         {
-            // Remove any matching rule to prevent duplicates
-            _profile.Rules.RemoveAll(r => r.Button == targetBtn && r.Cadence == cadence && r.ChordSecondary == chordSecondary);
+            _profile.Rules.Add(newRule);
         }
 
-        var newRule = new MappingRuleDto
-        {
-            Button = targetBtn,
-            Cadence = cadence,
-            ChordSecondary = chordSecondary,
-            ActionType = actionType,
-            Parameter = parameter,
-            DisplayName = displayName
-        };
-
-        _profile.Rules.Add(newRule);
         ProfileConfig.Save(_profile, ConfigPath);
         ApplyProfileToEngine();
 
         AddRuleCard.Visibility = Visibility.Collapsed;
-        AddLog($"[KURAL KAYDEDİLDİ] {targetBtn} -> {displayName}");
+        AddLog($"[Rules] Kaydedildi: {ButtonDisplayName(newRule.Button)} {newRule.Cadence} → {newRule.DisplayName}");
     }
 
     private void BtnDeleteRule_Click(object sender, RoutedEventArgs e)
@@ -724,7 +1237,7 @@ public partial class MainWindow : FluentWindow
             _profile.Rules.Remove(item.Dto);
             ProfileConfig.Save(_profile, ConfigPath);
             ApplyProfileToEngine();
-            AddLog($"[KURAL SİLİNDİ] {item.ButtonName} eşlemesi kaldırıldı.");
+            AddLog($"[Rules] Silindi: {item.ButtonName}");
         }
     }
 
@@ -754,15 +1267,16 @@ public partial class MainWindow : FluentWindow
 
     private void BtnResetDefaults_Click(object sender, RoutedEventArgs e)
     {
-        var res = System.Windows.MessageBox.Show("Tüm tuş eşlemeleri varsayılan fabrika ayarlarına döndürülecek. Onaylıyor musunuz?", "Varsayılana Sıfırla", System.Windows.MessageBoxButton.YesNo, MessageBoxImage.Question);
+        var res = System.Windows.MessageBox.Show("Tüm kurallar silinip varsayılanlar yüklenecek. Emin misiniz?", "Sıfırla", System.Windows.MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (res == System.Windows.MessageBoxResult.Yes)
         {
             _profile = ProfileConfig.CreateDefault();
             ProfileConfig.Save(_profile, ConfigPath);
             ApplyProfileToEngine();
+            UpdateDpiStatus();
             SliderDoubleClick.Value = _profile.DoubleClickThresholdMs;
             SliderLongPress.Value = _profile.LongPressThresholdMs;
-            AddLog("[SİSTEM] Tüm ayarlar varsayılana sıfırlandı.");
+            AddLog("[System] Varsayılana sıfırlandı.");
         }
     }
 
@@ -787,35 +1301,54 @@ public partial class MainWindow : FluentWindow
     private void EngineToggle_Checked(object sender, RoutedEventArgs e)
     {
         _engine?.Resume();
-        if (StatusBadge != null && StatusBadgeText != null)
+        MouseVisual3D?.SetEngineActive(true);
+        if (StatusDot != null && StatusBadgeText != null)
         {
-            StatusBadge.Background = new SolidColorBrush(Color.FromArgb(0x26, 0x27, 0xA2, 0x44));
-            StatusBadgeText.Text = "AKTİF / KANCA DEVREDE";
-            StatusBadgeText.Foreground = new SolidColorBrush(Color.FromRgb(0x46, 0xC1, 0x5E));
-            AddLog("[SİSTEM] Motor başlatıldı.");
+            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0x46, 0xC1, 0x5E));
+            StatusBadgeText.Text = "Motor aktif";
+            StatusSubText.Text = "Hook aktif";
+            UpdateTrayState(true);
+            AddLog("[System] Motor açık.");
         }
     }
 
     private void EngineToggle_Unchecked(object sender, RoutedEventArgs e)
     {
         _engine?.Pause();
-        if (StatusBadge != null && StatusBadgeText != null)
+        MouseVisual3D?.SetEngineActive(false);
+        if (StatusDot != null && StatusBadgeText != null)
         {
-            StatusBadge.Background = new SolidColorBrush(Color.FromArgb(0x26, 0xD7, 0x3A, 0x49));
-            StatusBadgeText.Text = "DURAKLATILDI";
-            StatusBadgeText.Foreground = new SolidColorBrush(Color.FromRgb(0xE5, 0x53, 0x4B));
-            AddLog("[SİSTEM] Motor duraklatıldı. Tüm fare girdileri serbest.");
+            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0xE5, 0x53, 0x4B));
+            StatusBadgeText.Text = "Duraklatıldı";
+            StatusSubText.Text = "Hook pasif";
+            UpdateTrayState(false);
+            AddLog("[System] Motor duraklatıldı.");
         }
+    }
+
+    private static string StripTag(string msg) =>
+        msg.StartsWith('[') && msg.IndexOf("] ", StringComparison.Ordinal) is int k and > 0 ? msg[(k + 2)..] : msg;
+
+    private void BtnToggleLog_Changed(object sender, RoutedEventArgs e)
+    {
+        if (LogCard != null) LogCard.Visibility = BtnToggleLog.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private static readonly string DiagLogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HyperMouse", "diag.log");
 
-    private void AddLog(string msg)
+    /// <summary>
+    /// Adds a line to the event log. <paramref name="detail"/> lines (Hook / RawInput / HID internals) are
+    /// always written to diag.log but only shown in the UI when "Ayrıntılı" is checked.
+    /// </summary>
+    private void AddLog(string msg, bool detail = false)
     {
         string line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
-        _eventLogs.Insert(0, line);
-        if (_eventLogs.Count > 300) _eventLogs.RemoveAt(_eventLogs.Count - 1);
+        if (!detail || ChkVerboseHid?.IsChecked == true)
+        {
+            _eventLogs.Insert(0, detail ? line : $"{DateTime.Now:HH:mm:ss}  {StripTag(msg)}");
+            if (_eventLogs.Count > 200) _eventLogs.RemoveAt(_eventLogs.Count - 1);
+        }
 
         // Persist diagnostics so hardware behaviour can be analysed after a test session
         try
@@ -828,7 +1361,23 @@ public partial class MainWindow : FluentWindow
 
     private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        if (!_exiting && _profile.MinimizeToTray)
+        {
+            e.Cancel = true;
+            Hide();
+            if (!_trayHintShown)
+            {
+                _trayHintShown = true;
+                _tray?.ShowBalloonTip(2500, "HyperMouse arka planda", "Tepsideki simgeden açabilir veya kapatabilirsiniz.", System.Windows.Forms.ToolTipIcon.None);
+            }
+            return;
+        }
+
+        if (_hwnd != IntPtr.Zero) UnregisterHotKey(_hwnd, HotkeyId);
+        if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }
+        _learnTimer?.Stop();
         _rawInput?.Dispose();
         _engine?.Dispose();
+        System.Windows.Application.Current.Shutdown();
     }
 }

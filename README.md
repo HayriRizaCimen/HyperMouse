@@ -45,28 +45,33 @@
   - Donanım kancası, durum makinesi, zaman aşımı kontrol döngüsü ve asenkron eylem yürütücüsünü tek noktadan yönetir.
 - [x] **Birim ve Entegrasyon Testleri**:
   - `ITimeProvider` soyutlaması ile deterministik sanal zaman testleri.
-  - Toplam 18 birim ve uçtan uca test (`18 Passed, 0 Failed`).
+  - Toplam 30 birim ve uçtan uca test (`30 Passed, 0 Failed`).
 
 ---
 
-### Aşama 3: Profiller ve Aktif Pencere Takibi (M3 - Sırada)
+### Aşama 3: Modern Windows 11 Arayüzü & Sistem Tepsisi (M3)
+- [x] Wpf.Ui tabanlı Fluent Design ana pencere: Mica, yan menü, algılanan fare kartı. Tema seçimi: Sistem / Koyu / Açık. Vurgu renkli dolgulu slider'lar.
+- [x] Kural düzenleyici: tuş, ritim (tek, çift, üçlü tık, uzun basma, Bas-Çek, Chord) ve eylem seçimi.
+- [x] Sürükle-bırak sıralama: kart ilk/son sıraya kadar taşınabilir, uzun listede kenara yaklaşınca otomatik kaydırma.
+- [x] **Çakışma koruması:** Aynı tuş ve ritme ikinci eylem atanamaz. Editör canlı uyarır, Kaydet kilitlenir. Yüklemede yinelenen kurallar temizlenir (`RuleConflictChecker`).
+- [x] Sistem tepsisi (`NotifyIcon`) & özel ikon: Kapatınca tepsiye küçülür (Göster, Duraklat/Başlat, Çıkış menülü) ve küçük boyutta okunaklı minimal özel fare ikonu (`Assets/HyperMouse.ico`) EXE, pencere başlığı, görev çubuğu ve tepsi simgesinde kullanılır.
+- [x] Canlı test & etkileşimli 3D fare görseli (`Mouse3DVisual`): Basılan tuş 3D modelde animasyonla parlar/çöker; 360° sürükleyerek döndürme, hazır kamera açıları ve hover düğme bilgisi sunar. Olay kaydı isteğe bağlı açılır; sade görünüm varsayılan, Hook/RawInput/HID ayrıntıları "Ayrıntılı" ile görünür (hepsi `diag.log`'a yazılır).
+- [x] **DPI tuşu öğrenme** (Tuş Haritası ekranında): 3 saniyelik sayaçla standart dışı sinyal öğretilir (Consumer Control, HID Keyboard, Vendor HID raporu, raw button bits).
+- [x] Fare modeli tanıma: HID product string ve PnP aygıt ağacı kullanılır. USB, Bluetooth LE (`VID&02xxxx`) ve I2C yolları desteklenir. Takma ad verilebilir ve tak-çıkar takip edilir.
+- [x] Global duraklatma / acil durum kısayolu (`Ctrl + Alt + Shift + M`, `RegisterHotKey`).
+
+### Aşama 4: Sistem Entegrasyonu ve Yayınlama (M4)
+- [x] Windows ile otomatik başlatma (`HKCU\...\Run`, `--tray` ile gizli açılır).
+- [x] Tek örnek koruması (`Named Mutex`). İkinci açılış çalışan pencereyi öne getirir.
+- [x] Profil içe/dışa aktarma (Import/Export, doğrulama ve çakışma temizliği ile).
+- [x] Tek dosya (Single-File, Self-Contained) `.exe` derleme (`SingleFile` publish profili).
+- [ ] MSIX paketleme (imza sertifikası gerektirir).
+
+### Aşama 5: Profiller ve Aktif Pencere Takibi (M5 - Sırada)
 - [ ] Olay tabanlı (`SetWinEventHook`) aktif pencere ve işlem adı takibi (`chrome.exe`, `code.exe` vb.).
-- [ ] Uygulamaya özel profiller (örn. Tarayıcıda Yan Tuş: Sekme Değiştir, Kod Editöründe: Hata Ayıkla).
+- [ ] Uygulamaya özel profiller (örn. tarayıcıda Yan Tuş sekme değiştirir, kod editöründe hata ayıklar).
 - [ ] Evrensel profil (Global Fallback Profile).
-- [ ] Profil konfigürasyonlarının JSON olarak kaydedilmesi ve yüklenmesi (`profiles.json`).
-
-### Aşama 4: Modern Windows 11 Arayüzü & Sistem Tepsisi (M4)
-- [ ] Wpf.Ui tabanlı Fluent Design ana penceresi (Mica efekti, Koyu/Açık tema).
-- [ ] Tuş atama ve ritim düzenleme arayüzü (Tek tık, çift tık, uzun basma seçicileri).
-- [ ] Sistem Tepsisi (System Tray / NotifyIcon) entegrasyonu (Arka planda sessiz çalışma).
-- [ ] "Tuş Öğrenme" (Listen Mode) diyaloğu: Kullanıcı fareye bastığında hangi tuş olduğunu görsel olarak gösterir.
-- [ ] Global duraklatma / acil durum kısayolu (`Ctrl + Alt + Shift + M`).
-
-### Aşama 5: Sistem Entegrasyonu ve Yayınlama (M5)
-- [ ] Windows ile otomatik başlatma seçeneği (`HKCU\Run`).
-- [ ] Tek örnek koruması (`Named Mutex`).
-- [ ] Profil içe/dışa aktarma (Import/Export).
-- [ ] Tek dosya (Single-File Self-Contained) `.exe` derleme ve MSIX paketleme.
+- [x] Profil konfigürasyonunun JSON olarak kaydedilmesi ve yüklenmesi (`profiles.json`).
 
 ---
 
@@ -81,9 +86,20 @@
 dotnet build
 ```
 
+### Çalıştırma
+```powershell
+dotnet run --project HyperMouse.csproj
+```
+
 ### Testleri Çalıştırma
 ```powershell
 dotnet test
+```
+
+### Tek dosya .exe (kurulum gerektirmez)
+```powershell
+dotnet publish HyperMouse.csproj -p:PublishProfile=SingleFile
+# Çıktı: publish\HyperMouse.exe
 ```
 
 ---

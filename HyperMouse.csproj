@@ -6,8 +6,20 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <DefaultItemExcludes>$(DefaultItemExcludes);src\**;tests\**</DefaultItemExcludes>
+    <!-- WinForms only for the tray NotifyIcon; its global usings are removed to avoid WPF name clashes -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Assets\HyperMouse.ico</ApplicationIcon>
+    <DefaultItemExcludes>$(DefaultItemExcludes);src\**;tests\**;publish\**</DefaultItemExcludes>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\HyperMouse.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="WPF-UI" Version="4.3.0" />

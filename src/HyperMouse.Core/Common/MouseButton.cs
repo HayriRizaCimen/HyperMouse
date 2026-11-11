@@ -14,7 +14,13 @@ public enum MouseButton
     WheelUp = 6,
     WheelDown = 7,
     WheelTiltLeft = 8,
-    WheelTiltRight = 9
+    WheelTiltRight = 9,
+
+    /// <summary>
+    /// DPI / profile button. Not part of the standard mouse protocol: it is captured by learning
+    /// the vendor-specific signal (consumer usage, keyboard key or HID report) the mouse sends.
+    /// </summary>
+    DpiButton = 10
 }
 
 /// <summary>
