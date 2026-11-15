@@ -8,35 +8,46 @@
         mc:Ignorable="d"
         Title="HyperMouse"
         Icon="pack://application:,,,/Assets/HyperMouse.ico"
-        Height="800" Width="1180"
-        MinHeight="660" MinWidth="980"
+        Height="680" Width="1020"
+        MinHeight="590" MinWidth="880"
         WindowStartupLocation="CenterScreen"
         ExtendsContentIntoTitleBar="True"
-        WindowBackdropType="Mica">
+        WindowBackdropType="Acrylic">
 
     <ui:FluentWindow.Resources>
-        <!-- Sidebar navigation item -->
+        <!-- Sidebar navigation item (Dark Glassmorphism + Neon Cyan active glow) -->
         <Style x:Key="NavItem" TargetType="RadioButton">
             <Setter Property="GroupName" Value="Nav" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
-            <Setter Property="Margin" Value="0,0,0,4" />
+            <Setter Property="Margin" Value="0,0,0,6" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="Bd" CornerRadius="8" Padding="12,10" Background="Transparent">
+                        <Border x:Name="Bd" CornerRadius="10" Padding="12,11" Background="Transparent" BorderThickness="1" BorderBrush="Transparent">
                             <Grid>
-                                <Border x:Name="Pill" Width="3" Height="16" CornerRadius="2" HorizontalAlignment="Left" Margin="-12,0,0,0"
-                                        Background="{DynamicResource SystemAccentColorPrimaryBrush}" Visibility="Collapsed" />
+                                <Border x:Name="Pill" Width="3" Height="18" CornerRadius="2" HorizontalAlignment="Left" Margin="-12,0,0,0"
+                                        Background="#00E5FF" Visibility="Collapsed">
+                                    <Border.Effect>
+                                        <DropShadowEffect Color="#00E5FF" BlurRadius="8" ShadowDepth="0" Opacity="0.85" />
+                                    </Border.Effect>
+                                </Border>
                                 <ContentPresenter />
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                <Setter TargetName="Bd" Property="Background" Value="#1A00E5FF" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#9000E5FF" />
+                                <Setter TargetName="Bd" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect Color="#00E5FF" BlurRadius="14" ShadowDepth="0" Opacity="0.45" />
+                                    </Setter.Value>
+                                </Setter>
                                 <Setter TargetName="Pill" Property="Visibility" Value="Visible" />
                                 <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
                             </Trigger>
@@ -127,95 +138,143 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
+        <!-- Deep dark navy/purple backdrop + ambient radial glows (themed dynamically for Dark/Light) -->
+        <Grid x:Name="AmbientBackdrop" Grid.RowSpan="2" IsHitTestVisible="False">
+            <Grid.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#EA0B0D14" Offset="0.0" />
+                    <GradientStop Color="#EA101424" Offset="0.5" />
+                    <GradientStop Color="#EA15192B" Offset="1.0" />
+                </LinearGradientBrush>
+            </Grid.Background>
+            <!-- Top-left neon purple ambient glow -->
+            <Ellipse Width="580" Height="580" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-180,-200,0,0">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#389D4EDD" Offset="0.0" />
+                        <GradientStop Color="#129D4EDD" Offset="0.45" />
+                        <GradientStop Color="#009D4EDD" Offset="1.0" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+            <!-- Bottom-right neon cyan ambient glow -->
+            <Ellipse Width="640" Height="640" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-200,-220">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#2E00E5FF" Offset="0.0" />
+                        <GradientStop Color="#0E00E5FF" Offset="0.45" />
+                        <GradientStop Color="#0000E5FF" Offset="1.0" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+            <!-- Center subtle indigo glow -->
+            <Ellipse Width="520" Height="420" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="120,-120,0,0">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#1F5E60CE" Offset="0.0" />
+                        <GradientStop Color="#005E60CE" Offset="1.0" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+        </Grid>
+
         <ui:TitleBar Grid.Row="0" Title="HyperMouse" ShowMaximize="True" ShowMinimize="True">
             <ui:TitleBar.Icon>
                 <ui:ImageIcon Source="pack://application:,,,/Assets/HyperMouse.ico" />
             </ui:TitleBar.Icon>
             <ui:TitleBar.TrailingContent>
-                <ui:Button x:Name="BtnExitApp" Appearance="Transparent" Padding="10,4" Margin="0,0,6,0" VerticalAlignment="Center"
-                           Foreground="#E5534B" ToolTip="HyperMouse'u tamamen kapatır (tepsiye küçültmez)" Click="BtnExitApp_Click"
-                           WindowChrome.IsHitTestVisibleInChrome="True">
-                    <StackPanel Orientation="Horizontal">
-                        <ui:SymbolIcon Symbol="Power20" FontSize="14" Margin="0,0,6,0" Foreground="#E5534B" />
-                        <TextBlock Text="Kill Switch" FontSize="12" FontWeight="SemiBold" Foreground="#E5534B" />
-                    </StackPanel>
-                </ui:Button>
+                <Border CornerRadius="8" BorderThickness="1" BorderBrush="#9D4EDD" Background="#1C9D4EDD"
+                        Margin="0,0,8,0" VerticalAlignment="Center" WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#9D4EDD" BlurRadius="12" ShadowDepth="0" Opacity="0.55" />
+                    </Border.Effect>
+                    <ui:Button x:Name="BtnExitApp" Appearance="Transparent" Padding="12,5" BorderThickness="0"
+                               ToolTip="HyperMouse'u tamamen kapatır (tepsiye küçültmez)" Click="BtnExitApp_Click"
+                               WindowChrome.IsHitTestVisibleInChrome="True">
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon x:Name="KillSwitchIcon" Symbol="Power20" FontSize="14" Margin="0,0,6,0" Foreground="#E0AAFF" />
+                            <TextBlock x:Name="KillSwitchText" Text="Kill Switch" FontSize="12" FontWeight="SemiBold" Foreground="#F3D9FF" />
+                        </StackPanel>
+                    </ui:Button>
+                </Border>
             </ui:TitleBar.TrailingContent>
         </ui:TitleBar>
 
-        <Grid Grid.Row="1">
+        <Grid x:Name="MainContentHost" Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="232" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- ================= SIDEBAR ================= -->
-            <Grid Grid.Column="0" Margin="12,4,8,16">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+            <!-- ================= SIDEBAR (232px Glass Card) ================= -->
+            <Border Grid.Column="0" Style="{StaticResource GlassCardStyle}" Margin="16,6,8,20" Padding="14,18">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="8,4,0,22">
-                    <Image Source="pack://application:,,,/Assets/HyperMouse.ico" Width="38" Height="38"
-                           RenderOptions.BitmapScalingMode="HighQuality" />
-                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-                        <TextBlock Text="HyperMouse" FontSize="16" FontWeight="Bold" />
-                        <TextBlock Text="Mouse remapper" Style="{StaticResource Caption}" FontSize="11" />
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="6,2,0,24">
+                        <Image Source="pack://application:,,,/Assets/HyperMouse.ico" Width="38" Height="38"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                        <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="HyperMouse" FontSize="16" FontWeight="Bold" />
+                            <TextBlock Text="Mouse remapper" Style="{StaticResource Caption}" FontSize="11" />
+                        </StackPanel>
                     </StackPanel>
-                </StackPanel>
 
-                <StackPanel Grid.Row="1">
-                    <RadioButton x:Name="NavRules" Style="{StaticResource NavItem}" IsChecked="True" Checked="Nav_Checked" Tag="Rules">
-                        <StackPanel Orientation="Horizontal">
-                            <ui:SymbolIcon Symbol="Apps24" FontSize="18" Margin="0,0,12,0" />
-                            <TextBlock Text="Tuş Haritası" FontSize="14" />
-                        </StackPanel>
-                    </RadioButton>
-                    <RadioButton x:Name="NavLive" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="Live">
-                        <StackPanel Orientation="Horizontal">
-                            <ui:SymbolIcon Symbol="Pulse24" FontSize="18" Margin="0,0,12,0" />
-                            <TextBlock Text="Canlı Test &amp; Öğrenme" FontSize="14" />
-                        </StackPanel>
-                    </RadioButton>
-                    <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="Settings">
-                        <StackPanel Orientation="Horizontal">
-                            <ui:SymbolIcon Symbol="Settings24" FontSize="18" Margin="0,0,12,0" />
-                            <TextBlock Text="Ayarlar" FontSize="14" />
-                        </StackPanel>
-                    </RadioButton>
-                </StackPanel>
-
-                <!-- Engine status + exit -->
-                <StackPanel Grid.Row="2">
-                <Border CornerRadius="10" Padding="14,12" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <Grid>
-                        <StackPanel>
+                    <StackPanel Grid.Row="1">
+                        <RadioButton x:Name="NavRules" Style="{StaticResource NavItem}" IsChecked="True" Checked="Nav_Checked" Tag="Rules">
                             <StackPanel Orientation="Horizontal">
-                                <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#46C15E" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                <TextBlock x:Name="StatusBadgeText" Text="Motor aktif" FontWeight="SemiBold" FontSize="13" />
+                                <ui:SymbolIcon Symbol="Apps24" FontSize="18" Margin="0,0,12,0" />
+                                <TextBlock Text="Tuş Haritası" FontSize="14" />
                             </StackPanel>
-                            <TextBlock x:Name="StatusSubText" Text="Hook aktif" Style="{StaticResource Caption}" FontSize="11" Margin="16,2,0,0" />
-                            <TextBlock Text="Ctrl+Alt+Shift+M" Style="{StaticResource Caption}" FontSize="10" Margin="16,2,0,0" Opacity="0.7" />
-                        </StackPanel>
-                        <ui:ToggleSwitch x:Name="EngineToggle" IsChecked="True" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                         Checked="EngineToggle_Checked" Unchecked="EngineToggle_Unchecked" />
-                    </Grid>
-                </Border>
-                </StackPanel>
-            </Grid>
+                        </RadioButton>
+                        <RadioButton x:Name="NavLive" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="Live">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Pulse24" FontSize="18" Margin="0,0,12,0" />
+                                <TextBlock Text="Canlı Test" FontSize="14" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Checked="Nav_Checked" Tag="Settings">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Settings24" FontSize="18" Margin="0,0,12,0" />
+                                <TextBlock Text="Ayarlar" FontSize="14" />
+                            </StackPanel>
+                        </RadioButton>
+                    </StackPanel>
+
+                    <!-- Engine status + exit -->
+                    <StackPanel Grid.Row="2">
+                        <Border CornerRadius="12" Padding="12,12" Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                            <Grid>
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#46C15E" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                        <TextBlock x:Name="StatusBadgeText" Text="Motor aktif" FontWeight="SemiBold" FontSize="13" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="StatusSubText" Text="Hook aktif" Style="{StaticResource Caption}" FontSize="11" Margin="16,2,0,0" />
+                                    <TextBlock x:Name="TxtToggleShortcuts" Text="Ctrl+Alt+Shift+M veya Fare Tuşu" Style="{StaticResource Caption}" FontSize="10" Margin="16,2,0,0" Opacity="0.7" />
+                                </StackPanel>
+                                <ui:ToggleSwitch x:Name="EngineToggle" IsChecked="True" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                 Checked="EngineToggle_Checked" Unchecked="EngineToggle_Unchecked" />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </Border>
 
             <!-- ================= CONTENT ================= -->
-            <Grid Grid.Column="1" Margin="8,4,24,16">
+            <Grid Grid.Column="1" Margin="12,6,24,20">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
                 <!-- Detected mouse hero -->
-                <ui:Card Grid.Row="0" Padding="18,14" Margin="0,0,0,18">
+                <Border Grid.Row="0" Style="{StaticResource GlassCardStyle}" Padding="20,16" Margin="0,0,0,20">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -249,7 +308,7 @@
                             </Border>
                         </StackPanel>
                     </Grid>
-                </ui:Card>
+                </Border>
 
                 <!-- ================= PAGE: RULES ================= -->
                 <Grid Grid.Row="1" x:Name="PageRules">
@@ -260,7 +319,7 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <Grid Grid.Row="0" Margin="0,0,0,14">
+                    <Grid Grid.Row="0" Margin="0,0,0,16">
                         <StackPanel>
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="Tuş Haritası" Style="{StaticResource PageTitle}" />
@@ -272,11 +331,11 @@
                                        Style="{StaticResource Caption}" Margin="0,4,0,0" />
                         </StackPanel>
                         <ui:Button x:Name="BtnToggleAddRule" Appearance="Primary" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                   Click="BtnToggleAddRule_Click" Icon="{ui:SymbolIcon Add24}" Content="Yeni Kural" Padding="14,8" />
+                                   Click="BtnToggleAddRule_Click" Icon="{ui:SymbolIcon Add24}" Content="Yeni Kural" Padding="16,9" CornerRadius="10" />
                     </Grid>
 
                     <!-- DPI learn strip -->
-                    <ui:Card Grid.Row="1" Padding="14,10" Margin="0,0,0,12">
+                    <Border Grid.Row="1" Style="{StaticResource GlassCardStyle}" Padding="16,12" Margin="0,0,0,14">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
@@ -298,113 +357,22 @@
                                            Text="'Öğren'e, sonra DPI tuşuna basın." />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                <ui:Button x:Name="BtnForgetDpi" Content="Unut" Margin="0,0,8,0" Click="BtnForgetDpi_Click" Visibility="Collapsed" />
-                                <ui:Button x:Name="BtnLearnDpi" Appearance="Primary" Content="Öğren" Icon="{ui:SymbolIcon Record24}" Click="BtnLearnDpi_Click" />
+                                <ui:Button x:Name="BtnForgetDpi" Content="Unut" Margin="0,0,8,0" Padding="14,8" CornerRadius="10" Click="BtnForgetDpi_Click" Visibility="Collapsed" />
+                                <ui:Button x:Name="BtnLearnDpi" Appearance="Primary" Content="Öğren" Padding="16,8" CornerRadius="10" Icon="{ui:SymbolIcon Record24}" Click="BtnLearnDpi_Click" />
                             </StackPanel>
                         </Grid>
-                    </ui:Card>
+                    </Border>
 
-                    <!-- Editor -->
-                    <ui:Card Grid.Row="2" x:Name="AddRuleCard" Visibility="Collapsed" Margin="0,0,0,14" Padding="20">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,16">
-                                <TextBlock x:Name="AddRuleTitle" Text="Yeni Tuş Eşlemesi" FontSize="16" FontWeight="SemiBold" />
-                            </Grid>
-
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="16" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="16" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="16" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="1 · Fare tuşu" Style="{StaticResource FieldLabel}" />
-                                    <ComboBox x:Name="CmbTargetButton" SelectedIndex="0" SelectionChanged="Editor_SelectionChanged">
-                                        <ComboBoxItem Content="Yan Tuş 1 (Geri)" Tag="XButton1" />
-                                        <ComboBoxItem Content="Yan Tuş 2 (İleri)" Tag="XButton2" />
-                                        <ComboBoxItem Content="Orta Tuş (Tekerlek tıkı)" Tag="Middle" />
-                                        <ComboBoxItem Content="Sağ Tuş" Tag="Right" />
-                                        <ComboBoxItem Content="Sol Tuş" Tag="Left" />
-                                        <ComboBoxItem Content="Tekerlek Yukarı" Tag="WheelUp" />
-                                        <ComboBoxItem Content="Tekerlek Aşağı" Tag="WheelDown" />
-                                        <ComboBoxItem Content="Tekerlek Sola Eğ" Tag="WheelTiltLeft" />
-                                        <ComboBoxItem Content="Tekerlek Sağa Eğ" Tag="WheelTiltRight" />
-                                        <ComboBoxItem Content="DPI Tuşu (öğretilmiş)" Tag="DpiButton" />
-                                    </ComboBox>
-                                </StackPanel>
-
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="2 · Ritim" Style="{StaticResource FieldLabel}" />
-                                    <ComboBox x:Name="CmbCadence" SelectedIndex="0" SelectionChanged="CmbCadence_SelectionChanged">
-                                        <ComboBoxItem Content="Tek Tık" Tag="SingleClick" />
-                                        <ComboBoxItem Content="Çift Tık" Tag="DoubleClick" />
-                                        <ComboBoxItem Content="Üçlü Tık" Tag="TripleClick" />
-                                        <ComboBoxItem Content="Uzun Basma" Tag="LongPress" />
-                                        <ComboBoxItem Content="Bas-Çek (Press &amp; Hold)" Tag="PressAndHoldDown" />
-                                        <ComboBoxItem Content="Kombinasyon (Chord)" Tag="Chord" />
-                                    </ComboBox>
-                                </StackPanel>
-
-                                <StackPanel Grid.Column="4">
-                                    <TextBlock Text="3 · Eylem türü" Style="{StaticResource FieldLabel}" />
-                                    <ComboBox x:Name="CmbActionType" SelectedIndex="0" SelectionChanged="CmbActionType_SelectionChanged">
-                                        <ComboBoxItem Content="Klavye kısayolu" Tag="Hotkey" />
-                                        <ComboBoxItem Content="Medya &amp; ses" Tag="Media" />
-                                        <ComboBoxItem Content="Fare tuşu simülasyonu" Tag="Mouse" />
-                                        <ComboBoxItem Content="Hazır metin yaz" Tag="Text" />
-                                        <ComboBoxItem Content="Program / URL aç" Tag="Launch" />
-                                    </ComboBox>
-                                </StackPanel>
-
-                                <StackPanel Grid.Column="6">
-                                    <TextBlock x:Name="ActionParamLabel" Text="4 · Kısayol" Style="{StaticResource FieldLabel}" />
-                                    <ui:TextBox x:Name="TxtActionParam" Text="Ctrl+C" PlaceholderText="Örn: Ctrl+C, Win+D, Alt+F4" TextChanged="Editor_TextChanged" />
-                                    <ComboBox x:Name="CmbMediaAction" Visibility="Collapsed" SelectedIndex="0" SelectionChanged="Editor_SelectionChanged">
-                                        <ComboBoxItem Content="Sesi Aç" Tag="VolumeUp" />
-                                        <ComboBoxItem Content="Sesi Kıs" Tag="VolumeDown" />
-                                        <ComboBoxItem Content="Sesi Kapat / Aç" Tag="VolumeMute" />
-                                        <ComboBoxItem Content="Oynat / Durdur" Tag="PlayPause" />
-                                        <ComboBoxItem Content="Sonraki Parça" Tag="NextTrack" />
-                                        <ComboBoxItem Content="Önceki Parça" Tag="PreviousTrack" />
-                                    </ComboBox>
-                                </StackPanel>
-                            </Grid>
-
-                            <StackPanel x:Name="ChordSecondaryPanel" Visibility="Collapsed" Margin="0,14,0,0">
-                                <TextBlock Text="Basılıyken ikinci tuş" Style="{StaticResource FieldLabel}" />
-                                <ComboBox x:Name="CmbChordSecondary" SelectedIndex="0" Width="300" HorizontalAlignment="Left" SelectionChanged="Editor_SelectionChanged">
-                                    <ComboBoxItem Content="Tekerlek Yukarı" Tag="WheelUp" />
-                                    <ComboBoxItem Content="Tekerlek Aşağı" Tag="WheelDown" />
-                                    <ComboBoxItem Content="Sol Tık" Tag="Left" />
-                                    <ComboBoxItem Content="Sağ Tık" Tag="Right" />
-                                    <ComboBoxItem Content="Orta Tık" Tag="Middle" />
-                                </ComboBox>
-                            </StackPanel>
-
-                            <ui:InfoBar x:Name="ConflictInfo" Title="Çakışma" Severity="Error" IsClosable="False" IsOpen="False" Margin="0,14,0,0" />
-                            <ui:InfoBar x:Name="DpiHintInfo" Title="DPI tuşu henüz öğretilmedi" Severity="Warning" IsClosable="False" IsOpen="False" Margin="0,14,0,0"
-                                        Message="Önce Canlı Test sayfasından DPI tuşunu öğretin." />
-
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-                                <ui:Button Content="İptal" Click="BtnCancelAddRule_Click" Margin="0,0,8,0" />
-                                <ui:Button x:Name="BtnSaveRule" Appearance="Primary" Icon="{ui:SymbolIcon Checkmark24}" Content="Kaydet ve uygula" Click="BtnSaveRule_Click" />
-                            </StackPanel>
-                        </StackPanel>
-                    </ui:Card>
+                    <!-- Editor moved to frosted-glass modal overlay (RuleModalOverlay) below -->
 
                     <!-- Empty state -->
-                    <StackPanel Grid.Row="3" x:Name="EmptyRulesPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel Grid.Row="2" x:Name="EmptyRulesPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <ui:SymbolIcon Symbol="CursorClick24" FontSize="48" Foreground="{DynamicResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
                         <TextBlock Text="Henüz kural yok" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,10,0,4" />
                         <TextBlock Text="'Yeni Kural' ile başlayın." Style="{StaticResource Caption}" HorizontalAlignment="Center" />
                     </StackPanel>
 
-                    <ListBox Grid.Row="3" x:Name="RulesListBox"
+                    <ListBox Grid.Row="2" x:Name="RulesListBox"
                              Background="Transparent" BorderThickness="0"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -413,9 +381,15 @@
                              PreviewMouseMove="RulesListBox_PreviewMouseMove"
                              PreviewMouseLeftButtonUp="RulesListBox_PreviewMouseLeftButtonUp"
                              LostMouseCapture="RulesListBox_LostMouseCapture">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Columns="2" VerticalAlignment="Top" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
                         <ListBox.ItemContainerStyle>
                             <Style TargetType="ListBoxItem">
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="VerticalContentAlignment" Value="Stretch" />
                                 <Setter Property="Padding" Value="0" />
                                 <Setter Property="Background" Value="Transparent" />
                                 <Setter Property="BorderThickness" Value="0" />
@@ -431,7 +405,7 @@
                         </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <ui:Card Margin="0,0,0,8" Padding="14,12" Cursor="SizeAll" ToolTip="Sıralamak için tutup sürükleyin">
+                                <Border Style="{StaticResource GlassCardStyle}" Margin="6" Padding="16,14" Cursor="SizeAll" ToolTip="Sıralamak için tutup sürükleyin">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
@@ -459,12 +433,16 @@
                                             </StackPanel>
                                         </StackPanel>
 
-                                        <ui:Button Grid.Column="3" Appearance="Transparent" Padding="8" Tag="{Binding}" Click="BtnEditRule_Click" Cursor="Hand" ToolTip="Düzenle" Margin="0,0,4,0"
-                                                   Icon="{ui:SymbolIcon Edit20}" />
-                                        <ui:Button Grid.Column="4" Appearance="Transparent" Padding="8" Tag="{Binding}" Click="BtnDeleteRule_Click" Cursor="Hand" ToolTip="Sil"
-                                                   Icon="{ui:SymbolIcon Delete20}" Foreground="#E5534B" />
+                                        <ui:Button Grid.Column="3" Appearance="Secondary" Width="44" Height="44" Padding="0" CornerRadius="10"
+                                                   Tag="{Binding}" Click="BtnEditRule_Click" Cursor="Hand" ToolTip="Düzenle" Margin="0,0,8,0">
+                                            <ui:SymbolIcon Symbol="Edit24" FontSize="20" />
+                                        </ui:Button>
+                                        <ui:Button Grid.Column="4" Appearance="Secondary" Width="44" Height="44" Padding="0" CornerRadius="10"
+                                                   Tag="{Binding}" Click="BtnDeleteRule_Click" Cursor="Hand" ToolTip="Sil" Foreground="#E5534B">
+                                            <ui:SymbolIcon Symbol="Delete24" FontSize="20" Foreground="#E5534B" />
+                                        </ui:Button>
                                     </Grid>
-                                </ui:Card>
+                                </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -479,7 +457,7 @@
 
                     <Grid Grid.Column="0">
 
-                        <ui:Card Grid.Row="0" Padding="20" VerticalAlignment="Stretch" VerticalContentAlignment="Stretch">
+                        <Border Style="{StaticResource GlassCardStyle}" Padding="22" VerticalAlignment="Stretch">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -517,11 +495,11 @@
                                     </Grid>
                                 </Border>
                             </Grid>
-                        </ui:Card>
+                        </Border>
 
                     </Grid>
 
-                    <ui:Card Grid.Column="1" x:Name="LogCard" Visibility="Collapsed" Width="380" Margin="14,0,0,0" Padding="16">
+                    <Border Grid.Column="1" x:Name="LogCard" Style="{StaticResource GlassCardStyle}" Visibility="Collapsed" Width="380" Margin="16,0,0,0" Padding="18">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -541,15 +519,15 @@
                                          FontSize="12" Padding="4" />
                             </Border>
                         </Grid>
-                    </ui:Card>
+                    </Border>
                 </Grid>
 
                 <!-- ================= PAGE: SETTINGS ================= -->
                 <ScrollViewer Grid.Row="1" x:Name="PageSettings" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
-                    <StackPanel MaxWidth="720" HorizontalAlignment="Left">
-                        <TextBlock Text="Ayarlar" Style="{StaticResource PageTitle}" Margin="0,0,0,14" />
+                    <StackPanel MaxWidth="740" HorizontalAlignment="Left">
+                        <TextBlock Text="Ayarlar" Style="{StaticResource PageTitle}" Margin="0,0,0,16" />
 
-                        <ui:Card Margin="0,0,0,12" Padding="20">
+                        <Border Style="{StaticResource GlassCardStyle}" Margin="0,0,0,16" Padding="22">
                             <StackPanel>
                                 <TextBlock Text="Ritim hassasiyeti" FontSize="15" FontWeight="SemiBold" />
                                 <TextBlock Text="Çift tık ve uzun basma süreleri." Style="{StaticResource Caption}" Margin="0,2,0,16" />
@@ -564,9 +542,56 @@
                                 </Grid>
                                 <Slider x:Name="SliderLongPress" Style="{StaticResource AccentSlider}" Minimum="200" Maximum="800" Value="320" ValueChanged="SliderLongPress_ValueChanged" />
                             </StackPanel>
-                        </ui:Card>
+                        </Border>
 
-                        <ui:Card Margin="0,0,0,12" Padding="20">
+                        <!-- Fare Tuşuyla Devre Dışı Bırak / Aktif Et Card -->
+                        <Border Style="{StaticResource GlassCardStyle}" Margin="0,0,0,16" Padding="22">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Fare Tuşu ile Duraklat / Aktif Et" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <ui:ToggleSwitch x:Name="ToggleQuickDisable" Grid.Column="1" VerticalAlignment="Center"
+                                                     IsChecked="True" Checked="ToggleQuickDisable_Changed" Unchecked="ToggleQuickDisable_Changed" />
+                                </Grid>
+                                <TextBlock Text="Seçilen fare tuşuna basılı tutarak (hold) veya üst üste tıklayarak uygulamayı anında duraklatın / açın."
+                                           Style="{StaticResource Caption}" Margin="0,0,0,12" TextWrapping="Wrap" />
+
+                                <Grid x:Name="QuickDisableOptionsPanel" Margin="0,6,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="16" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Tetikleyici Tuş" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox x:Name="CmbQuickDisableButton" SelectionChanged="QuickDisableSettings_Changed">
+                                            <ComboBoxItem Content="Yan Tuş 2 (İleri)" Tag="XButton2" />
+                                            <ComboBoxItem Content="Yan Tuş 1 (Geri)" Tag="XButton1" />
+                                            <ComboBoxItem Content="Orta Tuş (Tekerlek tıkı)" Tag="Middle" />
+                                            <ComboBoxItem Content="DPI Tuşu (öğretilmiş)" Tag="DpiButton" />
+                                            <ComboBoxItem Content="Sağ Tuş" Tag="Right" />
+                                            <ComboBoxItem Content="Sol Tuş" Tag="Left" />
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Tetikleme Yöntemi" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox x:Name="CmbQuickDisableCadence" SelectionChanged="QuickDisableSettings_Changed">
+                                            <ComboBoxItem Content="Uzun Basma (Hold — 1 sn)" Tag="Hold" />
+                                            <ComboBoxItem Content="Üçlü Tık (3 Kez Tıkla)" Tag="TripleClick" />
+                                            <ComboBoxItem Content="Dörtlü Tık (4 Kez Tıkla)" Tag="QuadClick" />
+                                            <ComboBoxItem Content="Çift Tık (2 Kez Tıkla)" Tag="DoubleClick" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource GlassCardStyle}" Margin="0,0,0,16" Padding="22">
                             <StackPanel>
                                 <TextBlock Text="Bağlı fareler" FontSize="15" FontWeight="SemiBold" />
                                 <TextBlock Text="Windows'un gördüğü fareler." Style="{StaticResource Caption}" Margin="0,2,0,12" />
@@ -587,9 +612,9 @@
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
                             </StackPanel>
-                        </ui:Card>
+                        </Border>
 
-                        <ui:Card Margin="0,0,0,12" Padding="20">
+                        <Border Style="{StaticResource GlassCardStyle}" Margin="0,0,0,16" Padding="22">
                             <StackPanel>
                                 <TextBlock Text="Uygulama" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,12" />
 
@@ -631,22 +656,219 @@
                                     </Border>
                                 </Grid>
                             </StackPanel>
-                        </ui:Card>
+                        </Border>
 
-                        <ui:Card Padding="20">
+                        <Border Style="{StaticResource GlassCardStyle}" Padding="22">
                             <StackPanel>
                                 <TextBlock Text="Profil" FontSize="15" FontWeight="SemiBold" />
                                 <TextBlock Text="Kurallar profiles.json içinde saklanır." Style="{StaticResource Caption}" Margin="0,2,0,14" />
                                 <WrapPanel>
-                                    <ui:Button Content="Dışa aktar" Icon="{ui:SymbolIcon ArrowExport24}" Click="BtnExport_Click" Margin="0,0,8,8" />
-                                    <ui:Button Content="İçe aktar" Icon="{ui:SymbolIcon ArrowImport24}" Click="BtnImport_Click" Margin="0,0,8,8" />
-                                    <ui:Button Content="Klasörü aç" Icon="{ui:SymbolIcon FolderOpen24}" Click="BtnOpenConfigFolder_Click" Margin="0,0,8,8" />
-                                    <ui:Button Content="Varsayılana sıfırla" Appearance="Danger" Icon="{ui:SymbolIcon ArrowReset24}" Click="BtnResetDefaults_Click" Margin="0,0,0,8" />
+                                    <ui:Button Click="BtnExport_Click" Margin="0,0,8,8" Padding="14,9" CornerRadius="10">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Viewbox Width="16" Height="16" Margin="0,0,8,0">
+                                                <Canvas Width="24" Height="24">
+                                                    <Path Data="M4,15 L4,18 C4,19.1 4.9,20 6,20 L18,20 C19.1,20 20,19.1 20,18 L20,15 M12,4 L12,15 M7.5,8.5 L12,4 L16.5,8.5"
+                                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ui:Button}}"
+                                                          StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="Dışa aktar" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </ui:Button>
+                                    <ui:Button Click="BtnImport_Click" Margin="0,0,8,8" Padding="14,9" CornerRadius="10">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Viewbox Width="16" Height="16" Margin="0,0,8,0">
+                                                <Canvas Width="24" Height="24">
+                                                    <Path Data="M4,15 L4,18 C4,19.1 4.9,20 6,20 L18,20 C19.1,20 20,19.1 20,18 L20,15 M12,4 L12,15 M7.5,10.5 L12,15 L16.5,10.5"
+                                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ui:Button}}"
+                                                          StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="İçe aktar" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </ui:Button>
+                                    <ui:Button Content="Klasörü aç" Icon="{ui:SymbolIcon FolderOpen24}" Click="BtnOpenConfigFolder_Click" Margin="0,0,8,8" Padding="14,9" CornerRadius="10" />
+                                    <ui:Button Appearance="Danger" Click="BtnResetDefaults_Click" Margin="0,0,0,8" Padding="14,9" CornerRadius="10">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Viewbox Width="16" Height="16" Margin="0,0,8,0">
+                                                <Canvas Width="24" Height="24">
+                                                    <Path Data="M4,12 A8,8 0 1,1 6.3,17.7 M4,5.5 L4,12 L10.5,12"
+                                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ui:Button}}"
+                                                          StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="Varsayılana sıfırla" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </ui:Button>
                                 </WrapPanel>
                             </StackPanel>
-                        </ui:Card>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
+            </Grid>
+        </Grid>
+
+        <!-- ================= FROSTED MODAL POPUP: ADD / EDIT RULE ================= -->
+        <Grid x:Name="RuleModalOverlay" Grid.Row="1" Visibility="Collapsed" Background="#7A060812"
+              MouseLeftButtonDown="RuleModalBackdrop_MouseLeftButtonDown">
+            <Grid HorizontalAlignment="Center" VerticalAlignment="Center" Width="590"
+                  MouseLeftButtonDown="AddRuleCard_MouseLeftButtonDown">
+                <!-- Shadow on sibling layer so ComboBoxes don't jitter inside an Effect bitmap pass -->
+                <Border CornerRadius="16" Background="#22000000" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#000000" BlurRadius="40" ShadowDepth="10" Opacity="0.65" />
+                    </Border.Effect>
+                </Border>
+                <Border x:Name="AddRuleCard" Style="{StaticResource GlassCardStyle}" Padding="28">
+                    <Border.Resources>
+                        <CornerRadius x:Key="ControlCornerRadius">10</CornerRadius>
+                    </Border.Resources>
+                    <StackPanel>
+                        <Grid Margin="0,0,0,20">
+                            <TextBlock x:Name="AddRuleTitle" Text="Yeni Tuş Eşlemesi" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <ui:Button Appearance="Transparent" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                       Padding="8" Click="BtnCancelAddRule_Click" ToolTip="Kapat">
+                                <ui:SymbolIcon Symbol="Dismiss20" FontSize="16" />
+                            </ui:Button>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel x:Name="ModalField1" Grid.Row="0" Grid.Column="0">
+                                <TextBlock Text="1 · Fare tuşu" Style="{StaticResource FieldLabel}" />
+                                <ComboBox x:Name="CmbTargetButton" SelectedIndex="0" SelectionChanged="Editor_SelectionChanged">
+                                    <ComboBoxItem Content="Yan Tuş 1 (Geri)" Tag="XButton1" />
+                                    <ComboBoxItem Content="Yan Tuş 2 (İleri)" Tag="XButton2" />
+                                    <ComboBoxItem Content="Orta Tuş (Tekerlek tıkı)" Tag="Middle" />
+                                    <ComboBoxItem Content="Sağ Tuş" Tag="Right" />
+                                    <ComboBoxItem Content="Sol Tuş" Tag="Left" />
+                                    <ComboBoxItem Content="Tekerlek Yukarı" Tag="WheelUp" />
+                                    <ComboBoxItem Content="Tekerlek Aşağı" Tag="WheelDown" />
+                                    <ComboBoxItem Content="Tekerlek Sola Eğ" Tag="WheelTiltLeft" />
+                                    <ComboBoxItem Content="Tekerlek Sağa Eğ" Tag="WheelTiltRight" />
+                                    <ComboBoxItem Content="DPI Tuşu (öğretilmiş)" Tag="DpiButton" />
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel x:Name="ModalField2" Grid.Row="0" Grid.Column="2">
+                                <TextBlock Text="2 · Ritim" Style="{StaticResource FieldLabel}" />
+                                <ComboBox x:Name="CmbCadence" SelectedIndex="0" SelectionChanged="CmbCadence_SelectionChanged">
+                                    <ComboBoxItem Content="Tek Tık" Tag="SingleClick" />
+                                    <ComboBoxItem Content="Çift Tık" Tag="DoubleClick" />
+                                    <ComboBoxItem Content="Üçlü Tık" Tag="TripleClick" />
+                                    <ComboBoxItem Content="Uzun Basma" Tag="LongPress" />
+                                    <ComboBoxItem Content="Bas-Çek (Press &amp; Hold)" Tag="PressAndHoldDown" />
+                                    <ComboBoxItem Content="Kombinasyon (Chord)" Tag="Chord" />
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel x:Name="ModalField3" Grid.Row="2" Grid.Column="0">
+                                <TextBlock Text="3 · Eylem türü" Style="{StaticResource FieldLabel}" />
+                                <ComboBox x:Name="CmbActionType" SelectedIndex="0" SelectionChanged="CmbActionType_SelectionChanged">
+                                    <ComboBoxItem Content="Klavye kısayolu" Tag="Hotkey" />
+                                    <ComboBoxItem Content="Medya &amp; ses" Tag="Media" />
+                                    <ComboBoxItem Content="Fare tuşu simülasyonu" Tag="Mouse" />
+                                    <ComboBoxItem Content="Hazır metin yaz" Tag="Text" />
+                                    <ComboBoxItem Content="Program / URL aç" Tag="Launch" />
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel x:Name="ModalField4" Grid.Row="2" Grid.Column="2">
+                                <TextBlock x:Name="ActionParamLabel" Text="4 · Kısayol" Style="{StaticResource FieldLabel}" />
+                                <ui:TextBox x:Name="TxtActionParam" Text="Ctrl+C" PlaceholderText="Örn: Ctrl+C, Win+D, Alt+F4" TextChanged="Editor_TextChanged" />
+                                <ComboBox x:Name="CmbMediaAction" Visibility="Collapsed" SelectedIndex="0" SelectionChanged="Editor_SelectionChanged">
+                                    <ComboBoxItem Content="Sesi Aç" Tag="VolumeUp" />
+                                    <ComboBoxItem Content="Sesi Kıs" Tag="VolumeDown" />
+                                    <ComboBoxItem Content="Sesi Kapat / Aç" Tag="VolumeMute" />
+                                    <ComboBoxItem Content="Oynat / Durdur" Tag="PlayPause" />
+                                    <ComboBoxItem Content="Sonraki Parça" Tag="NextTrack" />
+                                    <ComboBoxItem Content="Önceki Parça" Tag="PreviousTrack" />
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel x:Name="ChordSecondaryPanel" Visibility="Collapsed" Margin="0,16,0,0">
+                            <TextBlock Text="Basılıyken ikinci tuş" Style="{StaticResource FieldLabel}" />
+                            <ComboBox x:Name="CmbChordSecondary" SelectedIndex="0" Width="320" HorizontalAlignment="Left" SelectionChanged="Editor_SelectionChanged">
+                                <ComboBoxItem Content="Tekerlek Yukarı" Tag="WheelUp" />
+                                <ComboBoxItem Content="Tekerlek Aşağı" Tag="WheelDown" />
+                                <ComboBoxItem Content="Sol Tık" Tag="Left" />
+                                <ComboBoxItem Content="Sağ Tık" Tag="Right" />
+                                <ComboBoxItem Content="Orta Tık" Tag="Middle" />
+                            </ComboBox>
+                        </StackPanel>
+
+                        <ui:InfoBar x:Name="ConflictInfo" Title="Çakışma" Severity="Error" IsClosable="False" IsOpen="False" Margin="0,16,0,0" />
+                        <ui:InfoBar x:Name="DpiHintInfo" Title="DPI tuşu henüz öğretilmedi" Severity="Warning" IsClosable="False" IsOpen="False" Margin="0,16,0,0"
+                                    Message="Önce Canlı Test sayfasından DPI tuşunu öğretin." />
+
+                        <StackPanel x:Name="ModalFooter" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+                            <ui:Button Content="İptal" Click="BtnCancelAddRule_Click" Padding="18,9" CornerRadius="10" Margin="0,0,10,0" />
+                            <ui:Button x:Name="BtnSaveRule" Appearance="Primary" Content="Kaydet" Padding="20,9" CornerRadius="10" Click="BtnSaveRule_Click" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- ================= FROSTED MODAL POPUP: DELETE CONFIRM ================= -->
+        <Grid x:Name="DeleteConfirmModalOverlay" Grid.Row="1" Visibility="Collapsed" Background="#7A060812"
+              MouseLeftButtonDown="DeleteConfirmBackdrop_MouseLeftButtonDown">
+            <Grid HorizontalAlignment="Center" VerticalAlignment="Center" Width="430"
+                  MouseLeftButtonDown="DeleteConfirmCard_MouseLeftButtonDown">
+                <Border CornerRadius="16" Background="#22000000" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#000000" BlurRadius="40" ShadowDepth="10" Opacity="0.65" />
+                    </Border.Effect>
+                </Border>
+                <Border x:Name="DeleteConfirmCard" Style="{StaticResource GlassCardStyle}" Padding="26">
+                    <StackPanel>
+                        <!-- Header with Warning/Trash icon and Title -->
+                        <Grid Margin="0,0,0,16">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border Width="40" Height="40" CornerRadius="10" Background="#22E5534B" Margin="0,0,12,0" VerticalAlignment="Center">
+                                    <ui:SymbolIcon Symbol="Delete24" FontSize="20" Foreground="#E5534B" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Kuralı Sil" FontSize="17" FontWeight="SemiBold" />
+                                    <TextBlock Text="Bu işlem geri alınamaz" Style="{StaticResource Caption}" Foreground="#E5534B" FontSize="11" />
+                                </StackPanel>
+                            </StackPanel>
+                            <ui:Button Appearance="Transparent" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                       Padding="6" Click="BtnCancelDelete_Click" ToolTip="Kapat">
+                                <ui:SymbolIcon Symbol="Dismiss20" FontSize="15" />
+                            </ui:Button>
+                        </Grid>
+
+                        <!-- Rule info preview card -->
+                        <Border CornerRadius="10" Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1"
+                                Padding="14,12" Margin="0,0,0,18">
+                            <StackPanel>
+                                <TextBlock x:Name="DeleteConfirmRuleName" Text="Yan Tuş 1 · Tek Tık" FontWeight="SemiBold" FontSize="14" />
+                                <TextBlock x:Name="DeleteConfirmRuleAction" Text="Kopyala (Ctrl + C)" Style="{StaticResource Caption}" FontSize="12" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Bu tuş eşlemesini silmek istediğinize emin misiniz?" TextWrapping="Wrap" Margin="0,0,0,22" />
+
+                        <!-- Action Buttons -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <ui:Button Content="Vazgeç" Click="BtnCancelDelete_Click" Padding="18,9" CornerRadius="10" Margin="0,0,10,0" />
+                            <ui:Button x:Name="BtnConfirmDelete" Appearance="Danger" Content="Kuralı Sil" Padding="20,9" CornerRadius="10" Click="BtnConfirmDelete_Click" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </Grid>
         </Grid>
     </Grid>

@@ -22,6 +22,7 @@ public sealed class HyperMouseEngine : IDisposable
 
     public GestureStateMachine StateMachine => _stateMachine;
     public IInputSimulator Input => _input;
+    public QuickDisableDetector QuickDisable { get; } = new();
     public bool IsPaused => _config.IsPaused;
     public bool IsRunning => _hook.IsRunning;
 
@@ -74,6 +75,7 @@ public sealed class HyperMouseEngine : IDisposable
         _input.ReleaseAllHeld();
         _buttonTracker.Reset();
         _stateMachine.Reset();
+        QuickDisable.Reset();
         _hook.Stop();
     }
 
@@ -83,6 +85,7 @@ public sealed class HyperMouseEngine : IDisposable
         _input.ReleaseAllHeld();
         _buttonTracker.Reset();
         _stateMachine.Reset();
+        QuickDisable.Reset();
     }
 
     public void Resume()
@@ -92,6 +95,8 @@ public sealed class HyperMouseEngine : IDisposable
 
     private bool OnFilterMouseEvent(RawMouseEvent ev)
     {
+        bool consumedByDisable = QuickDisable.ProcessEvent(ev);
+
         bool suppress = _stateMachine.ProcessEvent(ev);
         
         if (ev.EventType == MouseEventType.Down)
@@ -105,6 +110,11 @@ public sealed class HyperMouseEngine : IDisposable
             {
                 suppress = true;
             }
+        }
+
+        if (consumedByDisable)
+        {
+            suppress = true;
         }
 
         return suppress;
@@ -181,6 +191,7 @@ public sealed class HyperMouseEngine : IDisposable
                 {
                     _stateMachine.CheckTimeouts();
                 }
+                QuickDisable.Tick(_timeProvider.NowMs);
             }
         }
         catch (OperationCanceledException)

@@ -86,6 +86,12 @@ public sealed class ProfileConfig
     /// <summary>Closing the window keeps HyperMouse running in the system tray.</summary>
     public bool MinimizeToTray { get; set; } = true;
 
+    /// <summary>Allows quickly toggling HyperMouse active/paused via holding or multi-clicking a designated mouse button.</summary>
+    public bool QuickDisableEnabled { get; set; } = true;
+    public MouseButton QuickDisableButton { get; set; } = MouseButton.XButton2;
+    public QuickDisableCadence QuickDisableCadence { get; set; } = QuickDisableCadence.Hold;
+    public int QuickDisableHoldMs { get; set; } = 1000;
+
     /// <summary>User-given names for mice, keyed by "VID:PID" (for mice that report a generic name).</summary>
     public Dictionary<string, string> DeviceAliases { get; set; } = new();
 
@@ -100,6 +106,10 @@ public sealed class ProfileConfig
             Name = "Genel Profil",
             DoubleClickThresholdMs = 280,
             LongPressThresholdMs = 320,
+            QuickDisableEnabled = true,
+            QuickDisableButton = MouseButton.XButton2,
+            QuickDisableCadence = QuickDisableCadence.Hold,
+            QuickDisableHoldMs = 1000,
             Rules = new List<MappingRuleDto>
             {
                 new()

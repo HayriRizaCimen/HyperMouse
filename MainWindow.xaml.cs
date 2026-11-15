@@ -88,6 +88,7 @@ public partial class MainWindow : FluentWindow
         // Subscribe to hook and engine
         _mouseHook.MouseEventReceived += OnMouseEventReceived;
         _engine.StateMachine.TriggerFired += OnTriggerFired;
+        _engine.QuickDisable.ToggleRequested += OnQuickDisableToggleRequested;
 
         try
         {
@@ -255,6 +256,10 @@ public partial class MainWindow : FluentWindow
         SelectComboByTag(CmbTheme, _profile.Theme);
         ToggleTray.IsChecked = _profile.MinimizeToTray;
         ToggleAutostart.IsChecked = IsAutostartEnabled();
+        ToggleQuickDisable.IsChecked = _profile.QuickDisableEnabled;
+        SelectComboByTag(CmbQuickDisableButton, _profile.QuickDisableButton.ToString());
+        SelectComboByTag(CmbQuickDisableCadence, _profile.QuickDisableCadence.ToString());
+        QuickDisableOptionsPanel.Visibility = _profile.QuickDisableEnabled ? Visibility.Visible : Visibility.Collapsed;
         _settingsLoading = false;
         ApplyTheme(_profile.Theme);
     }
@@ -263,9 +268,86 @@ public partial class MainWindow : FluentWindow
     {
         switch (theme)
         {
-            case "Light": ApplicationThemeManager.Apply(ApplicationTheme.Light, WindowBackdropType.Mica); break;
-            case "Dark": ApplicationThemeManager.Apply(ApplicationTheme.Dark, WindowBackdropType.Mica); break;
+            case "Light": ApplicationThemeManager.Apply(ApplicationTheme.Light, WindowBackdropType.Acrylic); break;
+            case "Dark": ApplicationThemeManager.Apply(ApplicationTheme.Dark, WindowBackdropType.Acrylic); break;
             default: ApplicationThemeManager.ApplySystemTheme(); break;
+        }
+
+        bool isDark = theme switch
+        {
+            "Light" => false,
+            "Dark" => true,
+            _ => ApplicationThemeManager.GetAppTheme() == ApplicationTheme.Dark
+        };
+
+        UpdateGlassTheme(isDark);
+    }
+
+    private void UpdateGlassTheme(bool isDark)
+    {
+        if (isDark)
+        {
+            Application.Current.Resources["GlassCardBackgroundBrush"] = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+            Application.Current.Resources["GlassCardBorderBrush"] = new LinearGradientBrush(
+                Color.FromArgb(0x45, 0xFF, 0xFF, 0xFF),
+                Color.FromArgb(0x0D, 0xFF, 0xFF, 0xFF),
+                new Point(0, 0), new Point(0, 1));
+
+            AmbientBackdrop.Background = new LinearGradientBrush(
+                new GradientStopCollection
+                {
+                    new(Color.FromArgb(0xEA, 0x0B, 0x0D, 0x14), 0.0),
+                    new(Color.FromArgb(0xEA, 0x10, 0x14, 0x24), 0.5),
+                    new(Color.FromArgb(0xEA, 0x15, 0x19, 0x2B), 1.0)
+                },
+                new Point(0, 0), new Point(1, 1));
+
+            KillSwitchIcon.Foreground = new SolidColorBrush(Color.FromRgb(0xE0, 0xAA, 0xFF));
+            KillSwitchText.Foreground = new SolidColorBrush(Color.FromRgb(0xF3, 0xD9, 0xFF));
+            RuleModalOverlay.Background = new SolidColorBrush(Color.FromArgb(0x88, 0x05, 0x07, 0x10));
+            AddRuleCard.Background = new SolidColorBrush(Color.FromArgb(0xE8, 0x13, 0x17, 0x28));
+            DeleteConfirmModalOverlay.Background = RuleModalOverlay.Background;
+            DeleteConfirmCard.Background = AddRuleCard.Background;
+
+            Application.Current.Resources["ComboPopupBackgroundBrush"] = new SolidColorBrush(Color.FromArgb(0xF5, 0x15, 0x19, 0x2B));
+            Application.Current.Resources["ComboPopupBorderBrush"] = new LinearGradientBrush(
+                Color.FromArgb(0x45, 0xFF, 0xFF, 0xFF),
+                Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF),
+                new Point(0, 0), new Point(0, 1));
+            Application.Current.Resources["ComboItemSelectedBrush"] = new SolidColorBrush(Color.FromArgb(0x26, 0x00, 0xE5, 0xFF));
+            Application.Current.Resources["ComboItemSelectedBorderBrush"] = new SolidColorBrush(Color.FromArgb(0x55, 0x00, 0xE5, 0xFF));
+        }
+        else
+        {
+            Application.Current.Resources["GlassCardBackgroundBrush"] = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF));
+            Application.Current.Resources["GlassCardBorderBrush"] = new LinearGradientBrush(
+                Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF),
+                Color.FromArgb(0x33, 0x9D, 0x4E, 0xDD),
+                new Point(0, 0), new Point(0, 1));
+
+            AmbientBackdrop.Background = new LinearGradientBrush(
+                new GradientStopCollection
+                {
+                    new(Color.FromArgb(0xEA, 0xF2, 0xF5, 0xFC), 0.0),
+                    new(Color.FromArgb(0xEA, 0xEB, 0xF0, 0xFA), 0.5),
+                    new(Color.FromArgb(0xEA, 0xE3, 0xEA, 0xF8), 1.0)
+                },
+                new Point(0, 0), new Point(1, 1));
+
+            KillSwitchIcon.Foreground = new SolidColorBrush(Color.FromRgb(0x7B, 0x2C, 0xBF));
+            KillSwitchText.Foreground = new SolidColorBrush(Color.FromRgb(0x5A, 0x18, 0x9A));
+            RuleModalOverlay.Background = new SolidColorBrush(Color.FromArgb(0x66, 0xD8, 0xE2, 0xF5));
+            AddRuleCard.Background = new SolidColorBrush(Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF));
+            DeleteConfirmModalOverlay.Background = RuleModalOverlay.Background;
+            DeleteConfirmCard.Background = AddRuleCard.Background;
+
+            Application.Current.Resources["ComboPopupBackgroundBrush"] = new SolidColorBrush(Color.FromArgb(0xFA, 0xFF, 0xFF, 0xFF));
+            Application.Current.Resources["ComboPopupBorderBrush"] = new LinearGradientBrush(
+                Color.FromArgb(0x22, 0x00, 0x00, 0x00),
+                Color.FromArgb(0x14, 0x7B, 0x2C, 0xBF),
+                new Point(0, 0), new Point(0, 1));
+            Application.Current.Resources["ComboItemSelectedBrush"] = new SolidColorBrush(Color.FromArgb(0x1C, 0x00, 0x78, 0xD4));
+            Application.Current.Resources["ComboItemSelectedBorderBrush"] = new SolidColorBrush(Color.FromArgb(0x45, 0x00, 0x78, 0xD4));
         }
     }
 
@@ -319,6 +401,43 @@ public partial class MainWindow : FluentWindow
         {
             AddLog($"[Error] Autostart: {ex.Message}");
         }
+    }
+
+    private void OnQuickDisableToggleRequested()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            EngineToggle.IsChecked = !(EngineToggle.IsChecked == true);
+            bool active = EngineToggle.IsChecked == true;
+            _tray?.ShowBalloonTip(1500, "HyperMouse", active ? "Motor aktif edildi." : "Motor duraklatıldı.", System.Windows.Forms.ToolTipIcon.None);
+            try { System.Media.SystemSounds.Asterisk.Play(); } catch { }
+        });
+    }
+
+    private void ToggleQuickDisable_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_settingsLoading || _profile == null) return;
+        _profile.QuickDisableEnabled = ToggleQuickDisable.IsChecked == true;
+        QuickDisableOptionsPanel.Visibility = _profile.QuickDisableEnabled ? Visibility.Visible : Visibility.Collapsed;
+        ProfileConfig.Save(_profile, ConfigPath);
+        ApplyProfileToEngine();
+    }
+
+    private void QuickDisableSettings_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_settingsLoading || _profile == null) return;
+        if (CmbQuickDisableButton.SelectedItem is ComboBoxItem btnItem &&
+            Enum.TryParse<MouseButton>(btnItem.Tag?.ToString(), out var btn))
+        {
+            _profile.QuickDisableButton = btn;
+        }
+        if (CmbQuickDisableCadence.SelectedItem is ComboBoxItem cadItem &&
+            Enum.TryParse<QuickDisableCadence>(cadItem.Tag?.ToString(), out var cad))
+        {
+            _profile.QuickDisableCadence = cad;
+        }
+        ProfileConfig.Save(_profile, ConfigPath);
+        ApplyProfileToEngine();
     }
 
     private void BtnExport_Click(object sender, RoutedEventArgs e)
@@ -571,6 +690,11 @@ public partial class MainWindow : FluentWindow
         _config.DoubleClickThresholdMs = _profile.DoubleClickThresholdMs;
         _config.LongPressThresholdMs = _profile.LongPressThresholdMs;
 
+        _engine.QuickDisable.IsEnabled = _profile.QuickDisableEnabled;
+        _engine.QuickDisable.TargetButton = _profile.QuickDisableButton;
+        _engine.QuickDisable.Cadence = _profile.QuickDisableCadence;
+        _engine.QuickDisable.HoldDurationMs = _profile.QuickDisableHoldMs;
+
         foreach (var rule in _profile.Rules)
         {
             var action = rule.CreateAction();
@@ -678,7 +802,9 @@ public partial class MainWindow : FluentWindow
             TxtDetectedEvent.Text = $"DpiButton {ev.EventType}";
             HighlightVisualButton(ev.Button, ev.EventType == MouseEventType.Down);
             if (ev.EventType == MouseEventType.Down) AddLog("DPI Tuşu basıldı");
-            _engine.StateMachine.ProcessEvent(ev with { TimestampMs = Environment.TickCount64 });
+            var evWithTime = ev with { TimestampMs = Environment.TickCount64 };
+            _engine.QuickDisable.ProcessEvent(evWithTime);
+            _engine.StateMachine.ProcessEvent(evWithTime);
             return;
         }
 
@@ -732,6 +858,7 @@ public partial class MainWindow : FluentWindow
         }
 
         var adjusted = ev with { TimestampMs = now };
+        _engine.QuickDisable.ProcessEvent(adjusted);
         _engine.StateMachine.ProcessEvent(adjusted);
     }
 
@@ -776,7 +903,8 @@ public partial class MainWindow : FluentWindow
     private TranslateTransform? _dragTranslate;
     private ScaleTransform? _dragScale;
     private readonly List<ListBoxItem> _dragContainers = new();
-    private readonly List<double> _dragTops = new();
+    private readonly List<Point> _dragSlots = new();
+    private readonly List<double> _dragWidths = new();
     private readonly List<double> _dragHeights = new();
 
     private static readonly IEasingFunction SlideEase = new CubicEase { EasingMode = EasingMode.EaseOut };
@@ -843,7 +971,8 @@ public partial class MainWindow : FluentWindow
     private void BeginDrag()
     {
         _dragContainers.Clear();
-        _dragTops.Clear();
+        _dragSlots.Clear();
+        _dragWidths.Clear();
         _dragHeights.Clear();
 
         for (int i = 0; i < _rulesList.Count; i++)
@@ -856,7 +985,8 @@ public partial class MainWindow : FluentWindow
                 return;
             }
             _dragContainers.Add(c);
-            _dragTops.Add(c.TranslatePoint(new Point(0, 0), RulesListBox).Y);
+            _dragSlots.Add(c.TranslatePoint(new Point(0, 0), RulesListBox));
+            _dragWidths.Add(c.ActualWidth);
             _dragHeights.Add(c.ActualHeight);
             c.RenderTransform = new TranslateTransform();
         }
@@ -887,41 +1017,61 @@ public partial class MainWindow : FluentWindow
     {
         int idx = _dragIndex;
         int last = _dragContainers.Count - 1;
+        double dx = pos.X - _dragStartPoint.X;
         double dy = pos.Y - _dragStartPoint.Y;
 
-        // Let the card travel a little past the ends so the first/last slot is always reachable
-        double slack = _dragHeights[idx] * 0.6;
-        double minDy = _dragTops[0] - _dragTops[idx] - slack;
-        double maxDy = (_dragTops[last] + _dragHeights[last]) - (_dragTops[idx] + _dragHeights[idx]) + slack;
+        double minDx = -_dragSlots[idx].X - 12;
+        double maxDx = (RulesListBox.ActualWidth - (_dragSlots[idx].X + _dragWidths[idx])) + 12;
+        double minY = _dragSlots.Min(s => s.Y);
+        double maxBottom = _dragSlots.Select((s, i) => s.Y + _dragHeights[i]).Max();
+        double slack = _dragHeights[idx] * 0.45;
+        double minDy = minY - _dragSlots[idx].Y - slack;
+        double maxDy = maxBottom - (_dragSlots[idx].Y + _dragHeights[idx]) + slack;
+
+        dx = Math.Clamp(dx, minDx, Math.Max(minDx, maxDx));
         dy = Math.Clamp(dy, minDy, maxDy);
-        _dragTranslate!.Y = dy;
+        _dragTranslate!.X = dx;
+        _dragTranslate.Y = dy;
 
         AutoScrollWhileDragging(pos);
 
-        // Target slot = where the dragged card's centre is; crossing a neighbour's midpoint moves the gap (>= / <=)
-        double center = _dragTops[idx] + _dragHeights[idx] / 2 + dy;
+        // Closest 2D slot center to the dragged card's current center
+        double cx = _dragSlots[idx].X + _dragWidths[idx] / 2 + dx;
+        double cy = _dragSlots[idx].Y + _dragHeights[idx] / 2 + dy;
         int target = idx;
-        for (int i = idx + 1; i <= last; i++)
-            if (center >= _dragTops[i] + _dragHeights[i] / 2) target = i;
-        for (int i = idx - 1; i >= 0; i--)
-            if (center <= _dragTops[i] + _dragHeights[i] / 2) target = i;
+        double bestDistSq = double.MaxValue;
+        for (int i = 0; i <= last; i++)
+        {
+            double sx = _dragSlots[i].X + _dragWidths[i] / 2;
+            double sy = _dragSlots[i].Y + _dragHeights[i] / 2;
+            double distSq = (cx - sx) * (cx - sx) + (cy - sy) * (cy - sy);
+            if (distSq < bestDistSq)
+            {
+                bestDistSq = distSq;
+                target = i;
+            }
+        }
 
         if (target == _dragTarget) return;
         _dragTarget = target;
 
-        // Slide the other cards to open a gap at the target slot
-        double gap = _dragHeights[idx];
+        // Slide every other card smoothly to its shifted 2D grid slot
         for (int i = 0; i <= last; i++)
         {
             if (i == idx) continue;
-            double offset = 0;
-            if (idx < target && i > idx && i <= target) offset = -gap;
-            else if (idx > target && i >= target && i < idx) offset = gap;
+            int dest = i;
+            if (idx < target && i > idx && i <= target) dest = i - 1;
+            else if (idx > target && i >= target && i < idx) dest = i + 1;
+
+            double offX = _dragSlots[dest].X - _dragSlots[i].X;
+            double offY = _dragSlots[dest].Y - _dragSlots[i].Y;
 
             if (_dragContainers[i].RenderTransform is TranslateTransform tt)
             {
+                tt.BeginAnimation(TranslateTransform.XProperty,
+                    new DoubleAnimation(offX, TimeSpan.FromMilliseconds(180)) { EasingFunction = SlideEase });
                 tt.BeginAnimation(TranslateTransform.YProperty,
-                    new DoubleAnimation(offset, TimeSpan.FromMilliseconds(180)) { EasingFunction = SlideEase });
+                    new DoubleAnimation(offY, TimeSpan.FromMilliseconds(180)) { EasingFunction = SlideEase });
             }
         }
     }
@@ -940,7 +1090,8 @@ public partial class MainWindow : FluentWindow
         if (moved != 0)
         {
             // Content moved under the cursor: keep cached slot positions in sync
-            for (int i = 0; i < _dragTops.Count; i++) _dragTops[i] -= moved;
+            for (int i = 0; i < _dragSlots.Count; i++)
+                _dragSlots[i] = new Point(_dragSlots[i].X, _dragSlots[i].Y - moved);
             _dragStartPoint.Y -= moved;
         }
     }
@@ -971,16 +1122,17 @@ public partial class MainWindow : FluentWindow
         if (RulesListBox.IsMouseCaptured) RulesListBox.ReleaseMouseCapture();
 
         int idx = _dragIndex, target = _dragTarget;
-        double finalY = 0;
-        if (target > idx) for (int i = idx + 1; i <= target; i++) finalY += _dragHeights[i];
-        else if (target < idx) for (int i = target; i < idx; i++) finalY -= _dragHeights[i];
+        double finalX = _dragSlots[target].X - _dragSlots[idx].X;
+        double finalY = _dragSlots[target].Y - _dragSlots[idx].Y;
 
-        var settle = new DoubleAnimation(finalY, TimeSpan.FromMilliseconds(170)) { EasingFunction = SlideEase };
+        var settleX = new DoubleAnimation(finalX, TimeSpan.FromMilliseconds(170)) { EasingFunction = SlideEase };
+        var settleY = new DoubleAnimation(finalY, TimeSpan.FromMilliseconds(170)) { EasingFunction = SlideEase };
         var unscale = new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(170)) { EasingFunction = SlideEase };
-        settle.Completed += (_, _) => CommitReorder(idx, target);
+        settleY.Completed += (_, _) => CommitReorder(idx, target);
         _dragScale?.BeginAnimation(ScaleTransform.ScaleXProperty, unscale);
         _dragScale?.BeginAnimation(ScaleTransform.ScaleYProperty, unscale);
-        _dragTranslate!.BeginAnimation(TranslateTransform.YProperty, settle);
+        _dragTranslate!.BeginAnimation(TranslateTransform.XProperty, settleX);
+        _dragTranslate.BeginAnimation(TranslateTransform.YProperty, settleY);
     }
 
     private void CommitReorder(int oldIndex, int newIndex)
@@ -1030,18 +1182,42 @@ public partial class MainWindow : FluentWindow
     // ADD & EDIT RULE IMPLEMENTATION
     // ==========================================
 
+    private void OpenRuleModal()
+    {
+        MainContentHost.Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 14 };
+        RuleModalOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void CloseRuleModal()
+    {
+        RuleModalOverlay.Visibility = Visibility.Collapsed;
+        MainContentHost.Effect = null;
+    }
+
+    private void RuleModalBackdrop_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _editingRule = null;
+        CloseRuleModal();
+    }
+
+    private void AddRuleCard_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // Prevent clicks inside the modal card from bubbling to the backdrop
+        e.Handled = true;
+    }
+
     private void BtnToggleAddRule_Click(object sender, RoutedEventArgs e)
     {
         _editingRule = null;
         AddRuleTitle.Text = "Yeni Tuş Eşlemesi";
-        AddRuleCard.Visibility = AddRuleCard.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        OpenRuleModal();
         ValidateEditor();
     }
 
     private void BtnCancelAddRule_Click(object sender, RoutedEventArgs e)
     {
         _editingRule = null;
-        AddRuleCard.Visibility = Visibility.Collapsed;
+        CloseRuleModal();
     }
 
     private void BtnEditRule_Click(object sender, RoutedEventArgs e)
@@ -1076,7 +1252,7 @@ public partial class MainWindow : FluentWindow
                 SelectComboByTag(CmbChordSecondary, item.Dto.ChordSecondary.ToString());
             }
 
-            AddRuleCard.Visibility = Visibility.Visible;
+            OpenRuleModal();
             ValidateEditor();
         }
     }
@@ -1226,19 +1402,67 @@ public partial class MainWindow : FluentWindow
         ProfileConfig.Save(_profile, ConfigPath);
         ApplyProfileToEngine();
 
-        AddRuleCard.Visibility = Visibility.Collapsed;
+        CloseRuleModal();
         AddLog($"[Rules] Kaydedildi: {ButtonDisplayName(newRule.Button)} {newRule.Cadence} → {newRule.DisplayName}");
     }
+
+    private RuleDisplayItem? _pendingDeleteRule;
 
     private void BtnDeleteRule_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Wpf.Ui.Controls.Button btn && btn.Tag is RuleDisplayItem item)
         {
+            _pendingDeleteRule = item;
+            DeleteConfirmRuleName.Text = $"{item.ButtonName} · {item.CadenceDescription}";
+            DeleteConfirmRuleAction.Text = item.ActionDisplay;
+            OpenDeleteConfirmModal();
+        }
+    }
+
+    private void BtnConfirmDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pendingDeleteRule != null)
+        {
+            var item = _pendingDeleteRule;
+            _pendingDeleteRule = null;
             _profile.Rules.Remove(item.Dto);
             ProfileConfig.Save(_profile, ConfigPath);
             ApplyProfileToEngine();
             AddLog($"[Rules] Silindi: {item.ButtonName}");
         }
+        CloseDeleteConfirmModal();
+    }
+
+    private void BtnCancelDelete_Click(object sender, RoutedEventArgs e)
+    {
+        _pendingDeleteRule = null;
+        CloseDeleteConfirmModal();
+    }
+
+    private void OpenDeleteConfirmModal()
+    {
+        MainContentHost.Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 14 };
+        DeleteConfirmModalOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void CloseDeleteConfirmModal()
+    {
+        DeleteConfirmModalOverlay.Visibility = Visibility.Collapsed;
+        if (RuleModalOverlay.Visibility != Visibility.Visible)
+        {
+            MainContentHost.Effect = null;
+        }
+    }
+
+    private void DeleteConfirmBackdrop_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _pendingDeleteRule = null;
+        CloseDeleteConfirmModal();
+    }
+
+    private void DeleteConfirmCard_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
     }
 
     private void SliderDoubleClick_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)

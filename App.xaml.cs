@@ -30,11 +30,21 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         base.OnStartup(e);
 
-        bool startInTray = e.Args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase));
-        var window = new MainWindow();
-        MainWindow = window;
-        if (!startInTray) window.Show();
-        else window.StartHiddenInTray();
+        try
+        {
+            bool startInTray = e.Args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase));
+            var window = new MainWindow();
+            MainWindow = window;
+            if (!startInTray) window.Show();
+            else window.StartHiddenInTray();
+        }
+        catch (Exception ex)
+        {
+            TryLog($"[Startup Exception] {ex}");
+            MessageBox.Show($"Başlatma hatası:\n{ex}", "HyperMouse", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+            return;
+        }
 
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         var listener = new Thread(() =>
