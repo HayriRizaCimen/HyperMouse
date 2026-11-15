@@ -36,11 +36,8 @@ public sealed class RuleDisplayItem
 
 public partial class MainWindow : FluentWindow
 {
-    private static readonly string ConfigPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "HyperMouse",
-        "profiles.json"
-    );
+    private readonly ProfileManager _profileManager;
+    private ProfileConfig _profile => _profileManager?.CurrentProfile ?? ProfileConfig.CreateDefault();
 
     private readonly ThreadedMouseHook _mouseHook;
     private readonly Win32InputSimulator _inputSimulator;
@@ -48,7 +45,6 @@ public partial class MainWindow : FluentWindow
     private readonly StateMachineConfig _config;
     private RawInputReceiver? _rawInput;
 
-    private ProfileConfig _profile;
     private readonly ObservableCollection<RuleDisplayItem> _rulesList = new();
     private readonly ObservableCollection<string> _eventLogs = new();
 
@@ -60,6 +56,11 @@ public partial class MainWindow : FluentWindow
     private DispatcherTimer? _learnTimer;
     private DispatcherTimer? _deviceRefreshTimer;
 
+    private bool _isRenamingProfile;
+    private string _profileToRename = "";
+    private string _profileToDelete = "";
+    private bool _profileComboUpdating;
+
     private DispatcherTimer CreateRefreshTimer()
     {
         var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
@@ -70,19 +71,22 @@ public partial class MainWindow : FluentWindow
 
     public MainWindow()
     {
+        _config = new StateMachineConfig();
+        _mouseHook = new ThreadedMouseHook();
+        _inputSimulator = new Win32InputSimulator();
+        _engine = new HyperMouseEngine(_mouseHook, _inputSimulator, null, _config);
+
+        // Initialize ProfileManager before InitializeComponent so any early control events have a valid profile
+        _profileManager = new ProfileManager();
+        _profileManager.ActiveProfileChanged += _ => Dispatcher.Invoke(() => { ApplyProfileToEngine(); RefreshProfileCombo(); });
+        _profileManager.LanguageChanged += lang => Dispatcher.Invoke(() => ApplyLanguage(lang));
+
         InitializeComponent();
 
         RulesListBox.ItemsSource = _rulesList;
         LiveEventListBox.ItemsSource = _eventLogs;
         MiceList.ItemsSource = _miceView;
 
-        _config = new StateMachineConfig();
-        _mouseHook = new ThreadedMouseHook();
-        _inputSimulator = new Win32InputSimulator();
-        _engine = new HyperMouseEngine(_mouseHook, _inputSimulator, null, _config);
-
-        // Load profile configuration
-        _profile = ProfileConfig.Load(ConfigPath);
         ApplyProfileToEngine();
 
         // Subscribe to hook and engine
@@ -104,6 +108,8 @@ public partial class MainWindow : FluentWindow
         SourceInitialized += MainWindow_SourceInitialized;
         Closing += MainWindow_Closing;
     }
+
+    private void SaveProfile() => _profileManager?.SaveCurrent();
 
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
     {
@@ -146,9 +152,9 @@ public partial class MainWindow : FluentWindow
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        SliderDoubleClick.Value = _profile.DoubleClickThresholdMs;
-        SliderLongPress.Value = _profile.LongPressThresholdMs;
+        RefreshProfileCombo();
         LoadAppSettings();
+        ApplyLanguage(_profileManager.Language);
         AddLog("[System] Hazır. Hook aktif.");
         foreach (var dropped in _profile.DroppedConflicts)
             AddLog($"[Conflict] Yinelenen kural silindi: {dropped.Button} {dropped.Cadence} → {dropped.DisplayName}");
@@ -164,7 +170,7 @@ public partial class MainWindow : FluentWindow
     private System.Windows.Forms.ToolStripMenuItem? _trayToggleItem;
     private bool _exiting;
     private bool _trayHintShown;
-    private bool _settingsLoading;
+    private bool _settingsLoading = true;
     private IntPtr _hwnd;
 
     private const int WM_HOTKEY = 0x0312;
@@ -206,11 +212,12 @@ public partial class MainWindow : FluentWindow
             Visible = true
         };
         var menu = new System.Windows.Forms.ContextMenuStrip();
-        menu.Items.Add("Göster", null, (_, _) => Dispatcher.Invoke(ShowFromTray));
-        _trayToggleItem = new System.Windows.Forms.ToolStripMenuItem("Duraklat", null, (_, _) => Dispatcher.Invoke(() => EngineToggle.IsChecked = !(EngineToggle.IsChecked == true)));
+        string lang = LocalizationService.CurrentLanguage;
+        menu.Items.Add(LocalizationService.Get("Tray_Show", lang), null, (_, _) => Dispatcher.Invoke(ShowFromTray));
+        _trayToggleItem = new System.Windows.Forms.ToolStripMenuItem(LocalizationService.Get("Tray_Pause", lang), null, (_, _) => Dispatcher.Invoke(() => EngineToggle.IsChecked = !(EngineToggle.IsChecked == true)));
         menu.Items.Add(_trayToggleItem);
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
-        menu.Items.Add("Çıkış", null, (_, _) => Dispatcher.Invoke(ExitApp));
+        menu.Items.Add(LocalizationService.Get("Tray_Exit", lang), null, (_, _) => Dispatcher.Invoke(ExitApp));
         _tray.ContextMenuStrip = menu;
         _tray.MouseClick += (_, e) => { if (e.Button == System.Windows.Forms.MouseButtons.Left) Dispatcher.Invoke(ShowFromTray); };
     }
@@ -218,8 +225,50 @@ public partial class MainWindow : FluentWindow
     private void UpdateTrayState(bool active)
     {
         if (_tray == null) return;
-        _tray.Text = active ? "HyperMouse — aktif" : "HyperMouse — duraklatıldı";
-        if (_trayToggleItem != null) _trayToggleItem.Text = active ? "Duraklat" : "Başlat";
+        string lang = LocalizationService.CurrentLanguage;
+        _tray.Text = active ? LocalizationService.Get("Tray_ActiveText", lang) : LocalizationService.Get("Tray_PausedText", lang);
+        if (_trayToggleItem != null) _trayToggleItem.Text = active ? LocalizationService.Get("Tray_Pause", lang) : LocalizationService.Get("Tray_Resume", lang);
+    }
+
+    private void UpdateTrayMenuLanguage(string lang)
+    {
+        if (_tray?.ContextMenuStrip == null) return;
+        var items = _tray.ContextMenuStrip.Items;
+        if (items.Count >= 4)
+        {
+            items[0].Text = LocalizationService.Get("Tray_Show", lang);
+            if (_trayToggleItem != null)
+            {
+                bool active = EngineToggle.IsChecked == true;
+                _trayToggleItem.Text = active ? LocalizationService.Get("Tray_Pause", lang) : LocalizationService.Get("Tray_Resume", lang);
+            }
+            items[3].Text = LocalizationService.Get("Tray_Exit", lang);
+        }
+        UpdateTrayState(EngineToggle.IsChecked == true);
+    }
+
+    private void UpdateEngineStatusText(bool active)
+    {
+        string lang = LocalizationService.CurrentLanguage;
+        if (StatusDot != null && StatusBadgeText != null && StatusSubText != null)
+        {
+            if (active)
+            {
+                StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0x46, 0xC1, 0x5E));
+                StatusBadgeText.Text = LocalizationService.Get("Status_EngineActive", lang);
+                StatusSubText.Text = LocalizationService.Get("Status_HookActive", lang);
+            }
+            else
+            {
+                StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0xE5, 0x53, 0x4B));
+                StatusBadgeText.Text = LocalizationService.Get("Status_EnginePaused", lang);
+                StatusSubText.Text = LocalizationService.Get("Status_HookPaused", lang);
+            }
+        }
+        if (TxtToggleShortcuts != null)
+        {
+            TxtToggleShortcuts.Text = LocalizationService.Get("Status_ShortcutHint", lang);
+        }
     }
 
     private void BtnExitApp_Click(object sender, RoutedEventArgs e) => ExitApp();
@@ -244,7 +293,7 @@ public partial class MainWindow : FluentWindow
         {
             EngineToggle.IsChecked = !(EngineToggle.IsChecked == true);
             bool active = EngineToggle.IsChecked == true;
-            _tray?.ShowBalloonTip(1500, "HyperMouse", active ? "Motor açıldı." : "Motor duraklatıldı.", System.Windows.Forms.ToolTipIcon.None);
+            _tray?.ShowBalloonTip(1500, "HyperMouse", active ? LocalizationService.Get("Tray_EngineStarted") : LocalizationService.Get("Tray_EnginePaused"), System.Windows.Forms.ToolTipIcon.None);
             handled = true;
         }
         return IntPtr.Zero;
@@ -253,6 +302,9 @@ public partial class MainWindow : FluentWindow
     private void LoadAppSettings()
     {
         _settingsLoading = true;
+        SliderDoubleClick.Value = _profile.DoubleClickThresholdMs;
+        SliderLongPress.Value = _profile.LongPressThresholdMs;
+        SelectComboByTag(CmbLanguage, _profileManager.Language);
         SelectComboByTag(CmbTheme, _profile.Theme);
         ToggleTray.IsChecked = _profile.MinimizeToTray;
         ToggleAutostart.IsChecked = IsAutostartEnabled();
@@ -262,6 +314,186 @@ public partial class MainWindow : FluentWindow
         QuickDisableOptionsPanel.Visibility = _profile.QuickDisableEnabled ? Visibility.Visible : Visibility.Collapsed;
         _settingsLoading = false;
         ApplyTheme(_profile.Theme);
+    }
+
+    private void ApplyLanguage(string langCode)
+    {
+        LocalizationService.CurrentLanguage = langCode;
+        AppLanguage lang = LocalizationService.CurrentAppLanguage;
+
+        // Declarative UI text bindings (TextBlock -> L10nKey)
+        (System.Windows.Controls.TextBlock? Element, L10nKey Key)[] textBindings =
+        [
+            (TxtAppSubtitle, L10nKey.App_Subtitle),
+            (TxtNavKeyMap, L10nKey.Nav_KeyMap),
+            (TxtNavLive, L10nKey.Nav_LiveTest),
+            (TxtNavSettings, L10nKey.Nav_Settings),
+            (TxtHeroTitle, L10nKey.Hero_Title),
+            (TxtPageRulesTitle, L10nKey.Rules_Title),
+            (TxtPageRulesSubtitle, L10nKey.Rules_Subtitle),
+            (TxtDpiTitle, L10nKey.Rules_DpiTitle),
+            (TxtEmptyRulesTitle, L10nKey.Rules_EmptyTitle),
+            (TxtEmptyRulesSubtitle, L10nKey.Rules_EmptySubtitle),
+            (TxtLiveTitle, L10nKey.Live_Title),
+            (TxtLiveSubtitle, L10nKey.Live_Subtitle),
+            (TxtLiveBtnLog, L10nKey.Live_BtnLog),
+            (TxtLiveLastEventTitle, L10nKey.Live_LastEvent),
+            (TxtLiveTriggeredCadenceTitle, L10nKey.Live_TriggeredCadence),
+            (TxtLiveLogTitle, L10nKey.Live_BtnLog),
+            (TxtSettingsTitle, L10nKey.Settings_Title),
+            (TxtSettingsCadenceTitle, L10nKey.Settings_CadenceTitle),
+            (TxtSettingsCadenceSubtitle, L10nKey.Settings_CadenceSubtitle),
+            (TxtSettingsDoubleClick, L10nKey.Settings_DoubleClick),
+            (TxtSettingsLongPress, L10nKey.Settings_LongPress),
+            (TxtSettingsQuickDisableTitle, L10nKey.Settings_QuickDisableTitle),
+            (TxtSettingsQuickDisableSubtitle, L10nKey.Settings_QuickDisableSubtitle),
+            (TxtSettingsTriggerButton, L10nKey.Settings_TriggerButton),
+            (TxtSettingsTriggerCadence, L10nKey.Settings_TriggerCadence),
+            (TxtSettingsConnectedMiceTitle, L10nKey.Settings_ConnectedMiceTitle),
+            (TxtSettingsConnectedMiceSubtitle, L10nKey.Settings_ConnectedMiceSubtitle),
+            (TxtSettingsAppTitle, L10nKey.Settings_AppTitle),
+            (TxtSettingsLanguageTitle, L10nKey.Settings_LanguageTitle),
+            (TxtSettingsLanguageSubtitle, L10nKey.Settings_LanguageSubtitle),
+            (TxtSettingsThemeTitle, L10nKey.Settings_ThemeTitle),
+            (TxtSettingsThemeSubtitle, L10nKey.Settings_ThemeSubtitle),
+            (TxtSettingsAutostartTitle, L10nKey.Settings_AutostartTitle),
+            (TxtSettingsAutostartSubtitle, L10nKey.Settings_AutostartSubtitle),
+            (TxtSettingsTrayTitle, L10nKey.Settings_TrayTitle),
+            (TxtSettingsTraySubtitle, L10nKey.Settings_TraySubtitle),
+            (TxtSettingsHotkeyTitle, L10nKey.Settings_HotkeyTitle),
+            (TxtHotkeyStatus, L10nKey.Settings_HotkeySubtitle),
+            (TxtSettingsProfileTitle, L10nKey.Settings_ProfileTitle),
+            (TxtSettingsProfileSubtitle, L10nKey.Settings_ProfileSubtitle),
+            (TxtBtnExport, L10nKey.Settings_BtnExport),
+            (TxtBtnImport, L10nKey.Settings_BtnImport),
+            (TxtBtnResetDefaults, L10nKey.Settings_BtnResetDefaults),
+            (LblModalStep1, L10nKey.Modal_Step1),
+            (LblModalStep2, L10nKey.Modal_Step2),
+            (LblModalStep3, L10nKey.Modal_Step3),
+            (LblModalChordSecondary, L10nKey.Modal_ChordSecondary),
+            (TxtDeleteConfirmTitle, L10nKey.DeleteModal_Title),
+            (TxtDeleteConfirmSubtitle, L10nKey.DeleteModal_Subtitle),
+            (TxtDeleteConfirmPrompt, L10nKey.DeleteModal_Message),
+            (TxtProfileDeleteTitle, L10nKey.Profile_Delete_Title),
+            (TxtProfileDeleteWarning, L10nKey.Profile_Delete_Warning)
+        ];
+
+        foreach (var (element, key) in textBindings)
+        {
+            if (element != null) element.Text = LocalizationService.Get(key, lang);
+        }
+
+        // Declarative ContentControl bindings (Button / CheckBox -> L10nKey)
+        (ContentControl? Control, L10nKey Key)[] contentBindings =
+        [
+            (BtnToggleAddRule, L10nKey.Rules_BtnNewRule),
+            (ChkVerboseHid, L10nKey.Live_Verbose),
+            (BtnOpenConfigFolder, L10nKey.Settings_BtnOpenFolder),
+            (BtnCancelAddRule, L10nKey.Modal_BtnCancel),
+            (BtnSaveRule, L10nKey.Modal_BtnSave),
+            (BtnCancelDelete, L10nKey.DeleteModal_BtnCancel),
+            (BtnConfirmDelete, L10nKey.DeleteModal_BtnConfirm),
+            (BtnProfilePromptCancel, L10nKey.Modal_BtnCancel),
+            (BtnProfilePromptConfirm, L10nKey.Modal_BtnSave),
+            (BtnProfileDeleteCancel, L10nKey.DeleteModal_BtnCancel),
+            (BtnProfileDeleteConfirm, L10nKey.Profile_Delete)
+        ];
+
+        foreach (var (control, key) in contentBindings)
+        {
+            if (control != null) control.Content = LocalizationService.Get(key, lang);
+        }
+
+        // Declarative ToolTip bindings (FrameworkElement -> L10nKey)
+        (FrameworkElement? Element, L10nKey Key)[] tooltipBindings =
+        [
+            (BtnExitApp, L10nKey.KillSwitch_Tooltip),
+            (BtnRenameMouse, L10nKey.Hero_RenameTooltip),
+            (BtnNewProfile, L10nKey.Profile_New),
+            (BtnRenameProfile, L10nKey.Profile_Rename),
+            (BtnDeleteProfile, L10nKey.Profile_Delete),
+            (ChkVerboseHid, L10nKey.Live_VerboseTooltip),
+            (BtnClearLog, L10nKey.Live_ClearLogTooltip)
+        ];
+
+        foreach (var (element, key) in tooltipBindings)
+        {
+            if (element != null) element.ToolTip = LocalizationService.Get(key, lang);
+        }
+
+        if (ConflictInfo != null) ConflictInfo.Title = LocalizationService.Get(L10nKey.Modal_ConflictTitle, lang);
+        if (DpiHintInfo != null)
+        {
+            DpiHintInfo.Title = LocalizationService.Get(L10nKey.Modal_DpiWarningTitle, lang);
+            DpiHintInfo.Message = LocalizationService.Get(L10nKey.Modal_DpiWarningMessage, lang);
+        }
+
+        UpdateEngineStatusText(EngineToggle.IsChecked == true);
+        UpdateMouseInfo();
+        UpdateDpiStatus();
+        UpdateComboBoxContents(lang);
+        UpdateTrayMenuLanguage(langCode);
+        ApplyProfileToEngine();
+    }
+
+    private void UpdateComboBoxContents(AppLanguage lang)
+    {
+        if (CmbTargetButton == null) return;
+
+        foreach (ComboBox cmb in new[] { CmbTargetButton, CmbChordSecondary, CmbQuickDisableButton })
+        {
+            foreach (var obj in cmb.Items)
+            {
+                if (obj is ComboBoxItem item && Enum.TryParse<MouseButton>(item.Tag?.ToString(), out var btn))
+                    item.Content = LocalizationService.ButtonDisplayName(btn, lang);
+            }
+        }
+
+        foreach (var obj in CmbCadence.Items)
+        {
+            if (obj is ComboBoxItem item && Enum.TryParse<CadenceType>(item.Tag?.ToString(), out var cad))
+                item.Content = LocalizationService.CadenceDisplayName(cad, lang);
+        }
+
+        foreach (var obj in CmbActionType.Items)
+        {
+            if (obj is ComboBoxItem item && item.Tag is string tag)
+                item.Content = LocalizationService.ActionTypeDisplayName(tag, lang);
+        }
+
+        foreach (var obj in CmbMediaAction.Items)
+        {
+            if (obj is ComboBoxItem item && item.Tag is string tag)
+                item.Content = LocalizationService.MediaCommandDisplayName(tag, lang);
+        }
+
+        foreach (var obj in CmbQuickDisableCadence.Items)
+        {
+            if (obj is ComboBoxItem item && Enum.TryParse<QuickDisableCadence>(item.Tag?.ToString(), out var cad))
+                item.Content = LocalizationService.QuickDisableCadenceDisplayName(cad, lang);
+        }
+
+        foreach (var obj in CmbTheme.Items)
+        {
+            if (obj is ComboBoxItem item && item.Tag is string tag)
+            {
+                item.Content = tag switch
+                {
+                    "System" => LocalizationService.Get(L10nKey.Settings_ThemeSystem, lang),
+                    "Dark" => LocalizationService.Get(L10nKey.Settings_ThemeDark, lang),
+                    "Light" => LocalizationService.Get(L10nKey.Settings_ThemeLight, lang),
+                    _ => tag
+                };
+            }
+        }
+    }
+
+    private void CmbLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_settingsLoading) return;
+        string lang = (CmbLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "tr";
+        _profileManager.SetLanguage(lang);
+        ApplyLanguage(lang);
     }
 
     private void ApplyTheme(string theme)
@@ -308,6 +540,10 @@ public partial class MainWindow : FluentWindow
             AddRuleCard.Background = new SolidColorBrush(Color.FromArgb(0xE8, 0x13, 0x17, 0x28));
             DeleteConfirmModalOverlay.Background = RuleModalOverlay.Background;
             DeleteConfirmCard.Background = AddRuleCard.Background;
+            ProfilePromptModalOverlay.Background = RuleModalOverlay.Background;
+            ProfilePromptCard.Background = AddRuleCard.Background;
+            ProfileDeleteModalOverlay.Background = RuleModalOverlay.Background;
+            ProfileDeleteCard.Background = AddRuleCard.Background;
 
             Application.Current.Resources["ComboPopupBackgroundBrush"] = new SolidColorBrush(Color.FromArgb(0xF5, 0x15, 0x19, 0x2B));
             Application.Current.Resources["ComboPopupBorderBrush"] = new LinearGradientBrush(
@@ -340,6 +576,10 @@ public partial class MainWindow : FluentWindow
             AddRuleCard.Background = new SolidColorBrush(Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF));
             DeleteConfirmModalOverlay.Background = RuleModalOverlay.Background;
             DeleteConfirmCard.Background = AddRuleCard.Background;
+            ProfilePromptModalOverlay.Background = RuleModalOverlay.Background;
+            ProfilePromptCard.Background = AddRuleCard.Background;
+            ProfileDeleteModalOverlay.Background = RuleModalOverlay.Background;
+            ProfileDeleteCard.Background = AddRuleCard.Background;
 
             Application.Current.Resources["ComboPopupBackgroundBrush"] = new SolidColorBrush(Color.FromArgb(0xFA, 0xFF, 0xFF, 0xFF));
             Application.Current.Resources["ComboPopupBorderBrush"] = new LinearGradientBrush(
@@ -356,7 +596,7 @@ public partial class MainWindow : FluentWindow
         if (_settingsLoading || _profile == null) return;
         string theme = (CmbTheme.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "System";
         _profile.Theme = theme;
-        ProfileConfig.Save(_profile, ConfigPath);
+        SaveProfile();
         ApplyTheme(theme);
     }
 
@@ -364,7 +604,7 @@ public partial class MainWindow : FluentWindow
     {
         if (_settingsLoading || _profile == null) return;
         _profile.MinimizeToTray = ToggleTray.IsChecked == true;
-        ProfileConfig.Save(_profile, ConfigPath);
+        SaveProfile();
     }
 
     private static bool IsAutostartEnabled()
@@ -389,12 +629,12 @@ public partial class MainWindow : FluentWindow
             if (ToggleAutostart.IsChecked == true && Environment.ProcessPath is { } exe)
             {
                 key.SetValue(RunValue, $"\"{exe}\" --tray");
-                AddLog("[System] Windows ile başlatma açıldı.");
+                AddLog(LocalizationService.Get("Log_AutostartEnabled"));
             }
             else
             {
                 key.DeleteValue(RunValue, false);
-                AddLog("[System] Windows ile başlatma kapatıldı.");
+                AddLog(LocalizationService.Get("Log_AutostartDisabled"));
             }
         }
         catch (Exception ex)
@@ -409,7 +649,7 @@ public partial class MainWindow : FluentWindow
         {
             EngineToggle.IsChecked = !(EngineToggle.IsChecked == true);
             bool active = EngineToggle.IsChecked == true;
-            _tray?.ShowBalloonTip(1500, "HyperMouse", active ? "Motor aktif edildi." : "Motor duraklatıldı.", System.Windows.Forms.ToolTipIcon.None);
+            _tray?.ShowBalloonTip(1500, "HyperMouse", active ? LocalizationService.Get("Tray_EngineStarted") : LocalizationService.Get("Tray_EnginePaused"), System.Windows.Forms.ToolTipIcon.None);
             try { System.Media.SystemSounds.Asterisk.Play(); } catch { }
         });
     }
@@ -419,7 +659,7 @@ public partial class MainWindow : FluentWindow
         if (_settingsLoading || _profile == null) return;
         _profile.QuickDisableEnabled = ToggleQuickDisable.IsChecked == true;
         QuickDisableOptionsPanel.Visibility = _profile.QuickDisableEnabled ? Visibility.Visible : Visibility.Collapsed;
-        ProfileConfig.Save(_profile, ConfigPath);
+        SaveProfile();
         ApplyProfileToEngine();
     }
 
@@ -436,17 +676,18 @@ public partial class MainWindow : FluentWindow
         {
             _profile.QuickDisableCadence = cad;
         }
-        ProfileConfig.Save(_profile, ConfigPath);
+        SaveProfile();
         ApplyProfileToEngine();
     }
 
     private void BtnExport_Click(object sender, RoutedEventArgs e)
     {
+        string lang = LocalizationService.CurrentLanguage;
         var dlg = new SaveFileDialog
         {
-            Title = "Profili dışa aktar",
+            Title = LocalizationService.Get("Settings_BtnExport", lang),
             Filter = "HyperMouse profili (*.json)|*.json",
-            FileName = $"HyperMouse-{DateTime.Now:yyyy-MM-dd}.json"
+            FileName = $"HyperMouse-{_profile.Name}-{DateTime.Now:yyyy-MM-dd}.json"
         };
         if (dlg.ShowDialog(this) != true) return;
         ProfileConfig.Save(_profile, dlg.FileName);
@@ -455,7 +696,8 @@ public partial class MainWindow : FluentWindow
 
     private void BtnImport_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new OpenFileDialog { Title = "Profil içe aktar", Filter = "HyperMouse profili (*.json)|*.json" };
+        string lang = LocalizationService.CurrentLanguage;
+        var dlg = new OpenFileDialog { Title = LocalizationService.Get("Settings_BtnImport", lang), Filter = "HyperMouse profili (*.json)|*.json" };
         if (dlg.ShowDialog(this) != true) return;
 
         ProfileConfig imported;
@@ -469,19 +711,18 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
-        var res = System.Windows.MessageBox.Show($"{imported.Rules.Count} kural yüklenecek, mevcut kurallar değişecek. Devam edilsin mi?",
-            "İçe aktar", System.Windows.MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (res != System.Windows.MessageBoxResult.Yes) return;
-
-        _profile = imported;
-        ProfileConfig.Save(_profile, ConfigPath);
+        string profName = Path.GetFileNameWithoutExtension(dlg.FileName);
+        if (string.IsNullOrWhiteSpace(imported.Name)) imported.Name = profName;
+        _profileManager.SaveProfile(imported);
+        _profileManager.SwitchProfile(imported.Name);
+        RefreshProfileCombo();
         ApplyProfileToEngine();
         SliderDoubleClick.Value = _profile.DoubleClickThresholdMs;
         SliderLongPress.Value = _profile.LongPressThresholdMs;
         LoadAppSettings();
         UpdateMouseInfo();
         UpdateDpiStatus();
-        AddLog($"[Profile] İçe aktarıldı: {imported.Rules.Count} kural" +
+        AddLog($"[Profile] İçe aktarıldı: {imported.Name} ({imported.Rules.Count} kural)" +
                (imported.DroppedConflicts.Count > 0 ? $", {imported.DroppedConflicts.Count} çakışan kural atlandı." : "."));
     }
 
@@ -502,29 +743,31 @@ public partial class MainWindow : FluentWindow
     {
         if (_rawInput == null)
         {
-            TxtMouseModel.Text = "Fare bilgisi okunamadı";
+            TxtMouseModel.Text = LocalizationService.Get(L10nKey.Hero_NoMouse);
             return;
         }
 
         var mice = _rawInput.Mice.Where(m => m.Vid != 0).ToList();
         _miceView.Clear();
         foreach (var m in _rawInput.Mice) _miceView.Add(m);
-        TxtMouseCount.Text = $"{mice.Count} aygıt";
+        TxtMouseCount.Text = LocalizationService.Format(L10nKey.Hero_DeviceCount, mice.Count);
 
         var current = _rawInput.ActiveMouse is { Vid: not 0 } a ? a : mice.FirstOrDefault();
         if (current == null)
         {
-            TxtMouseModel.Text = "Tanınan fare yok";
-            TxtMouseDetails.Text = "Tuşlar yine de çalışır.";
+            TxtMouseModel.Text = LocalizationService.Get(L10nKey.Hero_NoMouse);
+            TxtMouseDetails.Text = LocalizationService.Get(L10nKey.Hero_NoMouseDetails);
             return;
         }
 
         _currentMouse = current;
         bool hasAlias = _profile.DeviceAliases.TryGetValue(current.VidPid, out var alias) && !string.IsNullOrWhiteSpace(alias);
         TxtMouseModel.Text = hasAlias ? alias : current.DisplayName;
-        TxtMouseModel.ToolTip = hasAlias ? $"Orijinal ad: {current.DisplayName}" : null;
+        TxtMouseModel.ToolTip = hasAlias ? current.DisplayName : null;
         string vendor = MouseVendors.Lookup(current.Vid);
-        string active = _rawInput.ActiveMouse?.Handle == current.Handle ? "Kullanılıyor" : "Bağlı";
+        string active = _rawInput.ActiveMouse?.Handle == current.Handle
+            ? LocalizationService.Get(L10nKey.Hero_Active)
+            : LocalizationService.Get(L10nKey.Hero_Connected);
         TxtMouseDetails.Text = $"{active} · {current.Connection} · VID:PID {current.VidPid}" + (vendor.Length > 0 ? $" · {vendor}" : "");
         MouseConnIcon.Symbol = current.Connection == "Bluetooth" ? SymbolRegular.Bluetooth24 : SymbolRegular.UsbStick24;
     }
@@ -560,7 +803,7 @@ public partial class MainWindow : FluentWindow
             string name = TxtMouseAlias.Text.Trim();
             if (name.Length == 0 || name == _currentMouse.DisplayName) _profile.DeviceAliases.Remove(_currentMouse.VidPid);
             else _profile.DeviceAliases[_currentMouse.VidPid] = name;
-            ProfileConfig.Save(_profile, ConfigPath);
+            SaveProfile();
         }
         EndAliasEdit();
         UpdateMouseInfo();
@@ -575,14 +818,17 @@ public partial class MainWindow : FluentWindow
 
     private void UpdateDpiStatus()
     {
+        string lang = LocalizationService.CurrentLanguage;
         bool learned = _profile.LearnedSignals.TryGetValue(MouseButton.DpiButton, out var sig);
-        TxtDpiStatus.Text = learned ? "DPI tuşu hazır" : "DPI tuşu öğretilmedi";
+        TxtDpiStatus.Text = learned ? LocalizationService.Get("Hero_DpiReady", lang) : LocalizationService.Get("Hero_DpiNotLearned", lang);
         BtnForgetDpi.Visibility = learned ? Visibility.Visible : Visibility.Collapsed;
+        BtnForgetDpi.Content = LocalizationService.Get("Rules_BtnForget", lang);
         if (_rawInput?.IsLearning != true)
         {
+            BtnLearnDpi.Content = LocalizationService.Get("Rules_BtnLearn", lang);
             TxtLearnStatus.Text = learned
-                ? $"Hazır: {sig!.Description}. Kurallarda 'DPI Tuşu'nu seçebilirsiniz."
-                : "'Öğren'e, sonra DPI tuşuna basın.";
+                ? LocalizationService.Format("Rules_DpiReady", sig!.Description)
+                : LocalizationService.Get("Rules_DpiInstruction", lang);
         }
         ValidateEditor();
     }
@@ -598,6 +844,7 @@ public partial class MainWindow : FluentWindow
     private void BtnLearnDpi_Click(object sender, RoutedEventArgs e)
     {
         if (_rawInput == null) return;
+        string lang = LocalizationService.CurrentLanguage;
         if (_rawInput.IsLearning)
         {
             StopLearn("İptal edildi.");
@@ -605,8 +852,8 @@ public partial class MainWindow : FluentWindow
         }
 
         _rawInput.BeginLearn();
-        BtnLearnDpi.Content = "İptal";
-        TxtLearnStatus.Text = "DPI tuşuna şimdi basın.";
+        BtnLearnDpi.Content = LocalizationService.Get("Rules_BtnCancel", lang);
+        TxtLearnStatus.Text = LocalizationService.Get("Rules_DpiInstruction", lang);
         AddLog("[Learn] DPI tuşu bekleniyor…");
 
         // Countdown ring
@@ -641,7 +888,7 @@ public partial class MainWindow : FluentWindow
         HideCountdown();
         _learnTimer?.Stop();
         _rawInput?.CancelLearn();
-        BtnLearnDpi.Content = "Öğren";
+        BtnLearnDpi.Content = LocalizationService.Get("Rules_BtnLearn");
         TxtLearnStatus.Text = message;
         AddLog($"[Learn] {message}");
     }
@@ -660,9 +907,9 @@ public partial class MainWindow : FluentWindow
     private void OnSignalLearned(LearnedSignal sig)
     {
         _learnTimer?.Stop();
-        BtnLearnDpi.Content = "Öğren";
+        BtnLearnDpi.Content = LocalizationService.Get("Rules_BtnLearn");
         _profile.LearnedSignals[MouseButton.DpiButton] = sig;
-        ProfileConfig.Save(_profile, ConfigPath);
+        SaveProfile();
         _rawInput?.SetBindings(_profile.LearnedSignals);
         AddLog($"[Learn ✓] DPI tuşu kaydedildi: {sig.Description}");
         UpdateDpiStatus();
@@ -671,7 +918,7 @@ public partial class MainWindow : FluentWindow
     private void BtnForgetDpi_Click(object sender, RoutedEventArgs e)
     {
         _profile.LearnedSignals.Remove(MouseButton.DpiButton);
-        ProfileConfig.Save(_profile, ConfigPath);
+        SaveProfile();
         _rawInput?.SetBindings(_profile.LearnedSignals);
         AddLog("[Learn] DPI tuşu silindi.");
         UpdateDpiStatus();
@@ -695,35 +942,23 @@ public partial class MainWindow : FluentWindow
         _engine.QuickDisable.Cadence = _profile.QuickDisableCadence;
         _engine.QuickDisable.HoldDurationMs = _profile.QuickDisableHoldMs;
 
+        string lang = LocalizationService.CurrentLanguage;
         foreach (var rule in _profile.Rules)
         {
             var action = rule.CreateAction();
             if (action != null)
             {
                 _engine.RegisterAction(rule.Button, rule.Cadence, action, rule.ChordSecondary, rule.Layer);
-                _rulesList.Add(CreateDisplayItem(rule));
+                _rulesList.Add(CreateDisplayItem(rule, lang));
             }
         }
 
-        RuleCountText.Text = $"{_rulesList.Count} kural";
+        RuleCountText.Text = LocalizationService.Format("Rules_Count", _rulesList.Count);
         EmptyRulesPanel.Visibility = _rulesList.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         _rawInput?.SetBindings(_profile.LearnedSignals);
     }
 
-    public static string ButtonDisplayName(MouseButton b) => b switch
-    {
-        MouseButton.XButton1 => "Yan Tuş 1 (Geri)",
-        MouseButton.XButton2 => "Yan Tuş 2 (İleri)",
-        MouseButton.Middle => "Orta Tuş",
-        MouseButton.Right => "Sağ Tuş",
-        MouseButton.Left => "Sol Tuş",
-        MouseButton.WheelUp => "Tekerlek Yukarı",
-        MouseButton.WheelDown => "Tekerlek Aşağı",
-        MouseButton.WheelTiltLeft => "Tekerlek Sola",
-        MouseButton.WheelTiltRight => "Tekerlek Sağa",
-        MouseButton.DpiButton => "DPI Tuşu",
-        _ => b.ToString()
-    };
+    public static string ButtonDisplayName(MouseButton b) => LocalizationService.ButtonDisplayName(b);
 
     private static SolidColorBrush Rgb(byte r, byte g, byte b, byte a = 0xFF)
     {
@@ -732,8 +967,9 @@ public partial class MainWindow : FluentWindow
         return br;
     }
 
-    private static RuleDisplayItem CreateDisplayItem(MappingRuleDto rule)
+    private static RuleDisplayItem CreateDisplayItem(MappingRuleDto rule, string? lang = null)
     {
+        string l = LocalizationService.NormalizeLanguage(lang ?? LocalizationService.CurrentLanguage);
         var icon = rule.Button switch
         {
             MouseButton.XButton1 => SymbolRegular.ArrowCircleLeft24,
@@ -745,23 +981,33 @@ public partial class MainWindow : FluentWindow
             _ => SymbolRegular.CursorClick24
         };
 
-        (string text, byte r, byte g, byte b) = rule.Cadence switch
+        string cadenceText = rule.Cadence switch
         {
-            CadenceType.SingleClick => ("Tek Tık", (byte)0x3B, (byte)0x8E, (byte)0xEA),
-            CadenceType.DoubleClick => ("Çift Tık", (byte)0x8B, (byte)0x5C, (byte)0xF6),
-            CadenceType.TripleClick => ("Üçlü Tık", (byte)0xD9, (byte)0x46, (byte)0xEF),
-            CadenceType.LongPress => ("Uzun Basma", (byte)0xF5, (byte)0x9E, (byte)0x0B),
-            CadenceType.PressAndHoldDown => ("Bas-Çek", (byte)0xF9, (byte)0x73, (byte)0x16),
-            CadenceType.Chord => ($"+ {ButtonDisplayName(rule.ChordSecondary)}", (byte)0x10, (byte)0xB9, (byte)0x81),
-            _ => (rule.Cadence.ToString(), (byte)0x94, (byte)0xA3, (byte)0xB8)
+            CadenceType.Chord => $"+ {LocalizationService.ButtonDisplayName(rule.ChordSecondary, l)}",
+            _ => LocalizationService.CadenceDisplayName(rule.Cadence, l)
         };
+
+        (byte r, byte g, byte b) = rule.Cadence switch
+        {
+            CadenceType.SingleClick => ((byte)0x3B, (byte)0x8E, (byte)0xEA),
+            CadenceType.DoubleClick => ((byte)0x8B, (byte)0x5C, (byte)0xF6),
+            CadenceType.TripleClick => ((byte)0xD9, (byte)0x46, (byte)0xEF),
+            CadenceType.LongPress => ((byte)0xF5, (byte)0x9E, (byte)0x0B),
+            CadenceType.PressAndHoldDown => ((byte)0xF9, (byte)0x73, (byte)0x16),
+            CadenceType.Chord => ((byte)0x10, (byte)0xB9, (byte)0x81),
+            _ => ((byte)0x94, (byte)0xA3, (byte)0xB8)
+        };
+
+        string layerSuffix = rule.Layer > 0 ? $"  ·  {LocalizationService.Format("Rules_Layer", rule.Layer)}" : "";
+        string buttonName = LocalizationService.ButtonDisplayName(rule.Button, l) + layerSuffix;
+        string actionDisplay = LocalizationService.LocalizeActionDisplay(rule.ActionType, rule.Parameter, rule.DisplayName, l);
 
         return new RuleDisplayItem
         {
             Dto = rule,
-            ButtonName = ButtonDisplayName(rule.Button) + (rule.Layer > 0 ? $"  ·  Katman {rule.Layer}" : ""),
-            CadenceDescription = text,
-            ActionDisplay = !string.IsNullOrEmpty(rule.DisplayName) ? rule.DisplayName : $"{rule.ActionType}: {rule.Parameter}",
+            ButtonName = buttonName,
+            CadenceDescription = cadenceText,
+            ActionDisplay = actionDisplay,
             Icon = icon,
             Accent = Rgb(r, g, b),
             AccentSoft = Rgb(r, g, b, 0x26)
@@ -871,16 +1117,9 @@ public partial class MainWindow : FluentWindow
     {
         Dispatcher.BeginInvoke(() =>
         {
-            string cadenceStr = trigger.Cadence switch
-            {
-                CadenceType.SingleClick => "Tek Tık",
-                CadenceType.DoubleClick => "Çift Tık",
-                CadenceType.TripleClick => "Üçlü Tık",
-                CadenceType.LongPress => "Uzun Basma",
-                CadenceType.PressAndHoldDown => "Bas-Çek",
-                CadenceType.Chord => $"{ButtonDisplayName(trigger.Button)} + {ButtonDisplayName(trigger.ChordSecondary)}",
-                _ => trigger.Cadence.ToString()
-            };
+            string cadenceStr = trigger.Cadence == CadenceType.Chord
+                ? $"{ButtonDisplayName(trigger.Button)} + {ButtonDisplayName(trigger.ChordSecondary)}"
+                : LocalizationService.CadenceDisplayName(trigger.Cadence);
 
             TxtDetectedCadence.Text = $"{ButtonDisplayName(trigger.Button)} · {cadenceStr}";
             AddLog($"▶ {ButtonDisplayName(trigger.Button)} · {cadenceStr}");
@@ -1156,7 +1395,7 @@ public partial class MainWindow : FluentWindow
             _profile.Rules.Clear();
             _profile.Rules.AddRange(ordered);
 
-            ProfileConfig.Save(_profile, ConfigPath);
+            SaveProfile();
             AddLog($"[Rules] '{moved.ButtonName}' {oldIndex + 1} → {newIndex + 1}");
         }
 
@@ -1191,7 +1430,13 @@ public partial class MainWindow : FluentWindow
     private void CloseRuleModal()
     {
         RuleModalOverlay.Visibility = Visibility.Collapsed;
-        MainContentHost.Effect = null;
+        if (DeleteConfirmModalOverlay.Visibility != Visibility.Visible &&
+            ProfilePromptModalOverlay.Visibility != Visibility.Visible &&
+            ProfileDeleteModalOverlay.Visibility != Visibility.Visible)
+        {
+            MainContentHost.Effect = null;
+        }
+        _editingRule = null;
     }
 
     private void RuleModalBackdrop_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1209,7 +1454,8 @@ public partial class MainWindow : FluentWindow
     private void BtnToggleAddRule_Click(object sender, RoutedEventArgs e)
     {
         _editingRule = null;
-        AddRuleTitle.Text = "Yeni Tuş Eşlemesi";
+        string lang = LocalizationService.CurrentLanguage;
+        AddRuleTitle.Text = LocalizationService.Get("Modal_TitleNew", lang);
         OpenRuleModal();
         ValidateEditor();
     }
@@ -1225,7 +1471,8 @@ public partial class MainWindow : FluentWindow
         if (sender is Wpf.Ui.Controls.Button btn && btn.Tag is RuleDisplayItem item)
         {
             _editingRule = item.Dto;
-            AddRuleTitle.Text = $"Kuralı Düzenle — {item.ButtonName}";
+            string lang = LocalizationService.CurrentLanguage;
+            AddRuleTitle.Text = LocalizationService.Format("Modal_TitleEdit", item.ButtonName);
 
             // Select Target Button
             SelectComboByTag(CmbTargetButton, item.Dto.Button.ToString());
@@ -1259,6 +1506,7 @@ public partial class MainWindow : FluentWindow
 
     private static void SelectComboByTag(ComboBox cmb, string tag)
     {
+        if (cmb == null) return;
         foreach (var obj in cmb.Items)
         {
             if (obj is ComboBoxItem item && string.Equals(item.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase))
@@ -1296,19 +1544,12 @@ public partial class MainWindow : FluentWindow
         {
             var mediaItem = CmbMediaAction.SelectedItem as ComboBoxItem;
             parameter = mediaItem?.Tag?.ToString() ?? "VolumeUp";
-            displayName = mediaItem?.Content?.ToString() ?? parameter;
+            displayName = LocalizationService.MediaCommandDisplayName(parameter, LocalizationService.CurrentLanguage);
         }
         else
         {
             parameter = TxtActionParam?.Text.Trim() ?? "";
-            displayName = actionType switch
-            {
-                "Hotkey" => $"Kısayol: {parameter}",
-                "Text" => $"Metin: {parameter}",
-                "Launch" => $"Aç: {parameter}",
-                "Mouse" => $"Fare: {parameter}",
-                _ => $"{actionType}: {parameter}"
-            };
+            displayName = LocalizationService.LocalizeActionDisplay(actionType, parameter, "", LocalizationService.CurrentLanguage);
         }
 
         MouseButton chordSecondary = MouseButton.None;
@@ -1337,8 +1578,9 @@ public partial class MainWindow : FluentWindow
         if (conflict != null)
         {
             var ex = conflict.Existing;
-            ConflictInfo.Message = $"{conflict.Reason} Mevcut: {ButtonDisplayName(ex.Button)} · {CreateDisplayItem(ex).CadenceDescription} → " +
-                                   $"{(string.IsNullOrEmpty(ex.DisplayName) ? ex.Parameter : ex.DisplayName)}";
+            string lang = LocalizationService.CurrentLanguage;
+            ConflictInfo.Message = $"{conflict.Reason} Mevcut: {LocalizationService.ButtonDisplayName(ex.Button, lang)} · {CreateDisplayItem(ex, lang).CadenceDescription} → " +
+                                   $"{(string.IsNullOrEmpty(ex.DisplayName) ? ex.Parameter : LocalizationService.LocalizeActionDisplay(ex.ActionType, ex.Parameter, ex.DisplayName, lang))}";
         }
         ConflictInfo.IsOpen = conflict != null;
         BtnSaveRule.IsEnabled = conflict == null;
@@ -1351,12 +1593,13 @@ public partial class MainWindow : FluentWindow
         if (TxtActionParam == null || CmbMediaAction == null) return;
         var item = CmbActionType.SelectedItem as ComboBoxItem;
         string tag = item?.Tag?.ToString() ?? "";
+        string lang = LocalizationService.CurrentLanguage;
 
         if (tag == "Media")
         {
             TxtActionParam.Visibility = Visibility.Collapsed;
             CmbMediaAction.Visibility = Visibility.Visible;
-            ActionParamLabel.Text = "4 · Medya komutu";
+            ActionParamLabel.Text = LocalizationService.Get("Modal_Step4_Media", lang);
         }
         else
         {
@@ -1364,11 +1607,11 @@ public partial class MainWindow : FluentWindow
             CmbMediaAction.Visibility = Visibility.Collapsed;
             ActionParamLabel.Text = tag switch
             {
-                "Hotkey" => "4 · Kısayol (Ctrl+C)",
-                "Text" => "4 · Yazılacak metin",
-                "Launch" => "4 · Program / URL",
-                "Mouse" => "4 · Fare tuşu (Left/Right/Middle)",
-                _ => "4 · Parametre"
+                "Hotkey" => LocalizationService.Get("Modal_Step4_Hotkey", lang),
+                "Text" => LocalizationService.Get("Modal_Step4_Text", lang),
+                "Launch" => LocalizationService.Get("Modal_Step4_Launch", lang),
+                "Mouse" => LocalizationService.Get("Modal_Step4_Mouse", lang),
+                _ => LocalizationService.Get("Modal_Step4_Param", lang)
             };
         }
         ValidateEditor();
@@ -1381,7 +1624,8 @@ public partial class MainWindow : FluentWindow
 
         if (newRule.ActionType != "Media" && string.IsNullOrEmpty(newRule.Parameter))
         {
-            System.Windows.MessageBox.Show("Eylem değerini girin (örn. Ctrl+C).", "Eksik bilgi", System.Windows.MessageBoxButton.OK, MessageBoxImage.Warning);
+            string lang = LocalizationService.CurrentLanguage;
+            System.Windows.MessageBox.Show(LocalizationService.Get("Modal_ValidationEmptyParam", lang), "HyperMouse", System.Windows.MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -1399,12 +1643,16 @@ public partial class MainWindow : FluentWindow
             _profile.Rules.Add(newRule);
         }
 
-        ProfileConfig.Save(_profile, ConfigPath);
+        SaveProfile();
         ApplyProfileToEngine();
 
         CloseRuleModal();
         AddLog($"[Rules] Kaydedildi: {ButtonDisplayName(newRule.Button)} {newRule.Cadence} → {newRule.DisplayName}");
     }
+
+    // ==========================================
+    // DELETE RULE CONFIRM MODAL
+    // ==========================================
 
     private RuleDisplayItem? _pendingDeleteRule;
 
@@ -1426,7 +1674,7 @@ public partial class MainWindow : FluentWindow
             var item = _pendingDeleteRule;
             _pendingDeleteRule = null;
             _profile.Rules.Remove(item.Dto);
-            ProfileConfig.Save(_profile, ConfigPath);
+            SaveProfile();
             ApplyProfileToEngine();
             AddLog($"[Rules] Silindi: {item.ButtonName}");
         }
@@ -1448,7 +1696,9 @@ public partial class MainWindow : FluentWindow
     private void CloseDeleteConfirmModal()
     {
         DeleteConfirmModalOverlay.Visibility = Visibility.Collapsed;
-        if (RuleModalOverlay.Visibility != Visibility.Visible)
+        if (RuleModalOverlay.Visibility != Visibility.Visible &&
+            ProfilePromptModalOverlay.Visibility != Visibility.Visible &&
+            ProfileDeleteModalOverlay.Visibility != Visibility.Visible)
         {
             MainContentHost.Effect = null;
         }
@@ -1465,15 +1715,250 @@ public partial class MainWindow : FluentWindow
         e.Handled = true;
     }
 
+    // ==========================================
+    // PROFILE MANAGEMENT (SWITCH, NEW, RENAME, DELETE)
+    // ==========================================
+
+    private void RefreshProfileCombo()
+    {
+        if (CmbProfileSelect == null) return;
+        _profileComboUpdating = true;
+        CmbProfileSelect.Items.Clear();
+        var names = _profileManager.GetProfileNames();
+        string active = _profileManager.ActiveProfileName;
+        int selectIdx = 0;
+
+        for (int i = 0; i < names.Count; i++)
+        {
+            var item = new ComboBoxItem { Content = names[i], Tag = names[i] };
+            CmbProfileSelect.Items.Add(item);
+            if (string.Equals(names[i], active, StringComparison.OrdinalIgnoreCase))
+                selectIdx = i;
+        }
+
+        if (CmbProfileSelect.Items.Count > 0)
+            CmbProfileSelect.SelectedIndex = selectIdx;
+
+        if (BtnDeleteProfile != null)
+            BtnDeleteProfile.IsEnabled = names.Count > 1;
+
+        _profileComboUpdating = false;
+    }
+
+    private void CmbProfileSelect_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_profileComboUpdating) return;
+        if (CmbProfileSelect.SelectedItem is ComboBoxItem item && item.Tag is string name)
+        {
+            if (!string.Equals(name, _profileManager.ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+            {
+                _profileManager.SwitchProfile(name);
+                ApplyProfileToEngine();
+                LoadAppSettings();
+                UpdateDpiStatus();
+                SliderDoubleClick.Value = _profile.DoubleClickThresholdMs;
+                SliderLongPress.Value = _profile.LongPressThresholdMs;
+                AddLog(LocalizationService.Format("Log_ProfileLoaded", name));
+            }
+        }
+    }
+
+    private void BtnNewProfile_Click(object sender, RoutedEventArgs e)
+    {
+        _isRenamingProfile = false;
+        _profileToRename = "";
+        string lang = LocalizationService.CurrentLanguage;
+        TxtProfilePromptTitle.Text = LocalizationService.Get("Profile_New_Title", lang);
+        TxtProfilePromptSubtitle.Text = LocalizationService.Get("Profile_Name_Placeholder", lang);
+        TxtProfilePromptLabel.Text = LocalizationService.Get("Profile_Name_Label", lang);
+        TxtProfilePromptInput.Text = "";
+        ProfilePromptError.IsOpen = false;
+        OpenProfilePromptModal();
+        TxtProfilePromptInput.Focus();
+    }
+
+    private void BtnRenameProfile_Click(object sender, RoutedEventArgs e)
+    {
+        _isRenamingProfile = true;
+        _profileToRename = _profileManager.ActiveProfileName;
+        string lang = LocalizationService.CurrentLanguage;
+        TxtProfilePromptTitle.Text = LocalizationService.Get("Profile_Rename_Title", lang);
+        TxtProfilePromptSubtitle.Text = _profileToRename;
+        TxtProfilePromptLabel.Text = LocalizationService.Get("Profile_Name_Label", lang);
+        TxtProfilePromptInput.Text = _profileToRename;
+        ProfilePromptError.IsOpen = false;
+        OpenProfilePromptModal();
+        TxtProfilePromptInput.Focus();
+        TxtProfilePromptInput.SelectAll();
+    }
+
+    private void TxtProfilePromptInput_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) CommitProfilePrompt();
+        else if (e.Key == Key.Escape) CloseProfilePromptModal();
+    }
+
+    private void TxtProfilePromptInput_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        ValidateProfilePrompt();
+    }
+
+    private bool ValidateProfilePrompt()
+    {
+        string input = TxtProfilePromptInput.Text.Trim();
+        string lang = LocalizationService.CurrentLanguage;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            ProfilePromptError.Message = LocalizationService.Get("Profile_Error_Empty", lang);
+            ProfilePromptError.IsOpen = true;
+            BtnProfilePromptConfirm.IsEnabled = false;
+            return false;
+        }
+
+        if (!ProfileManager.IsValidProfileName(input, out var errKey))
+        {
+            ProfilePromptError.Message = LocalizationService.Get(errKey ?? "Profile_Error_InvalidChars", lang);
+            ProfilePromptError.IsOpen = true;
+            BtnProfilePromptConfirm.IsEnabled = false;
+            return false;
+        }
+
+        var existing = _profileManager.GetProfileNames();
+        bool isDuplicate = existing.Any(n => string.Equals(n, input, StringComparison.OrdinalIgnoreCase));
+        if (isDuplicate && (!_isRenamingProfile || !string.Equals(input, _profileToRename, StringComparison.OrdinalIgnoreCase)))
+        {
+            ProfilePromptError.Message = LocalizationService.Get("Profile_Error_Exists", lang);
+            ProfilePromptError.IsOpen = true;
+            BtnProfilePromptConfirm.IsEnabled = false;
+            return false;
+        }
+
+        ProfilePromptError.IsOpen = false;
+        BtnProfilePromptConfirm.IsEnabled = true;
+        return true;
+    }
+
+    private void BtnConfirmProfilePrompt_Click(object sender, RoutedEventArgs e) => CommitProfilePrompt();
+
+    private void CommitProfilePrompt()
+    {
+        if (!ValidateProfilePrompt()) return;
+        string name = TxtProfilePromptInput.Text.Trim();
+
+        if (_isRenamingProfile)
+        {
+            if (!string.Equals(_profileToRename, name, StringComparison.OrdinalIgnoreCase))
+            {
+                _profileManager.RenameProfile(_profileToRename, name);
+                AddLog(LocalizationService.Format("Log_ProfileRenamed", _profileToRename, name));
+            }
+        }
+        else
+        {
+            _profileManager.CreateProfile(name, copyCurrentRules: false);
+            AddLog(LocalizationService.Format("Log_ProfileCreated", name));
+        }
+
+        CloseProfilePromptModal();
+        RefreshProfileCombo();
+        ApplyProfileToEngine();
+        LoadAppSettings();
+    }
+
+    private void BtnCancelProfilePrompt_Click(object sender, RoutedEventArgs e) => CloseProfilePromptModal();
+    private void ProfilePromptBackdrop_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => CloseProfilePromptModal();
+    private void ProfilePromptCard_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => e.Handled = true;
+
+    private void OpenProfilePromptModal()
+    {
+        MainContentHost.Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 14 };
+        ProfilePromptModalOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void CloseProfilePromptModal()
+    {
+        ProfilePromptModalOverlay.Visibility = Visibility.Collapsed;
+        if (RuleModalOverlay.Visibility != Visibility.Visible &&
+            DeleteConfirmModalOverlay.Visibility != Visibility.Visible &&
+            ProfileDeleteModalOverlay.Visibility != Visibility.Visible)
+        {
+            MainContentHost.Effect = null;
+        }
+    }
+
+    private void BtnDeleteProfile_Click(object sender, RoutedEventArgs e)
+    {
+        var names = _profileManager.GetProfileNames();
+        string lang = LocalizationService.CurrentLanguage;
+        if (names.Count <= 1)
+        {
+            System.Windows.MessageBox.Show(
+                LocalizationService.Get("Profile_Error_CannotDeleteLast", lang),
+                LocalizationService.Get("Profile_Delete_Title", lang),
+                System.Windows.MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        _profileToDelete = _profileManager.ActiveProfileName;
+        TxtProfileDeleteTitle.Text = LocalizationService.Get("Profile_Delete_Title", lang);
+        TxtProfileDeleteWarning.Text = LocalizationService.Get("Profile_Delete_Warning", lang);
+        TxtProfileDeletePrompt.Text = LocalizationService.Format("Profile_Delete_Confirm", _profileToDelete);
+        OpenProfileDeleteModal();
+    }
+
+    private void BtnConfirmProfileDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_profileToDelete))
+        {
+            string deleted = _profileToDelete;
+            _profileToDelete = "";
+            bool ok = _profileManager.DeleteProfile(deleted);
+            if (ok)
+            {
+                AddLog(LocalizationService.Format("Log_ProfileDeleted", deleted));
+                RefreshProfileCombo();
+                ApplyProfileToEngine();
+                LoadAppSettings();
+            }
+        }
+        CloseProfileDeleteModal();
+    }
+
+    private void BtnCancelProfileDelete_Click(object sender, RoutedEventArgs e) => CloseProfileDeleteModal();
+    private void ProfileDeleteBackdrop_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => CloseProfileDeleteModal();
+    private void ProfileDeleteCard_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => e.Handled = true;
+
+    private void OpenProfileDeleteModal()
+    {
+        MainContentHost.Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 14 };
+        ProfileDeleteModalOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void CloseProfileDeleteModal()
+    {
+        ProfileDeleteModalOverlay.Visibility = Visibility.Collapsed;
+        if (RuleModalOverlay.Visibility != Visibility.Visible &&
+            DeleteConfirmModalOverlay.Visibility != Visibility.Visible &&
+            ProfilePromptModalOverlay.Visibility != Visibility.Visible)
+        {
+            MainContentHost.Effect = null;
+        }
+    }
+
+    // ==========================================
+    // SETTINGS SLIDERS & BUTTONS
+    // ==========================================
+
     private void SliderDoubleClick_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         int val = (int)e.NewValue;
         if (TxtDoubleClickVal != null) TxtDoubleClickVal.Text = $"{val} ms";
-        if (_profile != null)
+        if (!_settingsLoading && _profile != null && _config != null)
         {
             _profile.DoubleClickThresholdMs = val;
             _config.DoubleClickThresholdMs = val;
-            ProfileConfig.Save(_profile, ConfigPath);
+            SaveProfile();
         }
     }
 
@@ -1481,26 +1966,34 @@ public partial class MainWindow : FluentWindow
     {
         int val = (int)e.NewValue;
         if (TxtLongPressVal != null) TxtLongPressVal.Text = $"{val} ms";
-        if (_profile != null)
+        if (!_settingsLoading && _profile != null && _config != null)
         {
             _profile.LongPressThresholdMs = val;
             _config.LongPressThresholdMs = val;
-            ProfileConfig.Save(_profile, ConfigPath);
+            SaveProfile();
         }
     }
 
     private void BtnResetDefaults_Click(object sender, RoutedEventArgs e)
     {
-        var res = System.Windows.MessageBox.Show("Tüm kurallar silinip varsayılanlar yüklenecek. Emin misiniz?", "Sıfırla", System.Windows.MessageBoxButton.YesNo, MessageBoxImage.Question);
+        string lang = LocalizationService.CurrentLanguage;
+        var res = System.Windows.MessageBox.Show(
+            LocalizationService.Get("Settings_ResetConfirm", lang),
+            LocalizationService.Get("Settings_BtnResetDefaults", lang),
+            System.Windows.MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
         if (res == System.Windows.MessageBoxResult.Yes)
         {
-            _profile = ProfileConfig.CreateDefault();
-            ProfileConfig.Save(_profile, ConfigPath);
+            var def = ProfileConfig.CreateDefault();
+            def.Name = _profile.Name;
+            _profileManager.SaveProfile(def);
+            _profileManager.SwitchProfile(_profile.Name);
             ApplyProfileToEngine();
             UpdateDpiStatus();
             SliderDoubleClick.Value = _profile.DoubleClickThresholdMs;
             SliderLongPress.Value = _profile.LongPressThresholdMs;
-            AddLog("[System] Varsayılana sıfırlandı.");
+            AddLog("[System] " + LocalizationService.Get("Settings_ResetConfirm", lang));
         }
     }
 
@@ -1508,10 +2001,9 @@ public partial class MainWindow : FluentWindow
     {
         try
         {
-            string dir = Path.GetDirectoryName(ConfigPath) ?? "";
-            if (Directory.Exists(dir))
+            if (Directory.Exists(_profileManager.ProfilesDirectory))
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", dir) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo("explorer.exe", _profileManager.ProfilesDirectory) { UseShellExecute = true });
             }
         }
         catch { }
@@ -1526,28 +2018,18 @@ public partial class MainWindow : FluentWindow
     {
         _engine?.Resume();
         MouseVisual3D?.SetEngineActive(true);
-        if (StatusDot != null && StatusBadgeText != null)
-        {
-            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0x46, 0xC1, 0x5E));
-            StatusBadgeText.Text = "Motor aktif";
-            StatusSubText.Text = "Hook aktif";
-            UpdateTrayState(true);
-            AddLog("[System] Motor açık.");
-        }
+        UpdateEngineStatusText(true);
+        UpdateTrayState(true);
+        AddLog(LocalizationService.Get("Log_EngineStarted"));
     }
 
     private void EngineToggle_Unchecked(object sender, RoutedEventArgs e)
     {
         _engine?.Pause();
         MouseVisual3D?.SetEngineActive(false);
-        if (StatusDot != null && StatusBadgeText != null)
-        {
-            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0xE5, 0x53, 0x4B));
-            StatusBadgeText.Text = "Duraklatıldı";
-            StatusSubText.Text = "Hook pasif";
-            UpdateTrayState(false);
-            AddLog("[System] Motor duraklatıldı.");
-        }
+        UpdateEngineStatusText(false);
+        UpdateTrayState(false);
+        AddLog(LocalizationService.Get("Log_EnginePaused"));
     }
 
     private static string StripTag(string msg) =>
@@ -1592,7 +2074,8 @@ public partial class MainWindow : FluentWindow
             if (!_trayHintShown)
             {
                 _trayHintShown = true;
-                _tray?.ShowBalloonTip(2500, "HyperMouse arka planda", "Tepsideki simgeden açabilir veya kapatabilirsiniz.", System.Windows.Forms.ToolTipIcon.None);
+                string lang = LocalizationService.CurrentLanguage;
+                _tray?.ShowBalloonTip(2500, LocalizationService.Get("Tray_BalloonBackground", lang), LocalizationService.Get("Tray_BalloonHint", lang), System.Windows.Forms.ToolTipIcon.None);
             }
             return;
         }
